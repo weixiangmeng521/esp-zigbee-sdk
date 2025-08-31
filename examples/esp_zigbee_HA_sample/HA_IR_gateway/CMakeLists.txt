@@ -5,4 +5,4 @@ set(EXTRA_COMPONENT_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../common/light_driver
     )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(on_off_ir_gateway)
+project(zigbee_ir_gateway)

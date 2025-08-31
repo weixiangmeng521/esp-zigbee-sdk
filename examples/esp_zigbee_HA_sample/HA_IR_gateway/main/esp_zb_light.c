@@ -35,7 +35,7 @@
 static rmt_channel_handle_t tx_channel = NULL;
 static rmt_encoder_handle_t nec_encoder = NULL;
 
-static const char *TAG = "ESP_ZB_ON_OFF_LIGHT";
+static const char *TAG = "ESP_ZB_IR_GATEWAY";
 
 #define EXAMPLE_IR_RESOLUTION_HZ            1000000 // 1MHz resolution, 1 tick = 1us
 #define EXAMPLE_IR_TX_GPIO_NUM              24 // GPIO number for IR TX
