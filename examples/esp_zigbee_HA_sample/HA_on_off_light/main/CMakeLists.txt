@@ -1,4 +1,5 @@
 idf_component_register(
-    SRC_DIRS  "." "../../../common/zcl_utility/src"
-    INCLUDE_DIRS "." "../../../common/zcl_utility/include"
+    INCLUDE_DIRS "."
+    PRIV_REQUIRES esp_driver_rmt nvs_flash 
+    SRCS "esp_zb_light.c" "ir_nec_encoder.c" "zcl_utility.c"
 )

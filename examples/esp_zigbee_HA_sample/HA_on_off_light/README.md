@@ -59,3 +59,29 @@ I (8932) ESP_ZB_ON_OFF_LIGHT: Light sets to Off
 ## Troubleshooting
 
 For any technical queries, please open an [issue](https://github.com/espressif/esp-zigbee-sdk/issues) on GitHub. We will get back to you soon.
+
+### go to folder
+cd ./examples/esp_zigbee_HA_sample/HA_on_off_light
+
+
+### call
+source /Users/mengweixiang/esp/esp-idf/export.sh
+
+### build
+idf.py set-target esp32h2
+rm -rf build 
+idf.py fullclean
+idf.py build
+idf.py -p /dev/tty.usbmodem1441401 flash -b 115200
+
+
+idf.py menuconfig
+idf.py fullclean
+idf.py build
+
+
+### 获取端口
+ls /dev/tty.*
+
+### monitor
+idf.py -p /dev/tty.usbmodem1441401 monitor -b 115200
