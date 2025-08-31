@@ -61,7 +61,7 @@ I (8932) ESP_ZB_ON_OFF_LIGHT: Light sets to Off
 For any technical queries, please open an [issue](https://github.com/espressif/esp-zigbee-sdk/issues) on GitHub. We will get back to you soon.
 
 ### go to folder
-cd ./examples/esp_zigbee_HA_sample/HA_on_off_light
+cd ./examples/esp_zigbee_HA_sample/HA_IR_gateway
 
 
 ### call
