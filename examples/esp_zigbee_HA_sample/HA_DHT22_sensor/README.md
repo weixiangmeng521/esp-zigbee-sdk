@@ -2,7 +2,7 @@
 | ----------------- | -------- | -------- | -------- |
 
 ### Go to folder
-cd ./examples/esp_zigbee_HA_sample/HA_IR_gateway
+cd ./examples/esp_zigbee_HA_sample/HA_DHT22_sensor
 
 
 ### call
@@ -26,3 +26,16 @@ ls /dev/tty.*
 
 ### monitor
 idf.py -p /dev/tty.usbmodem1441401 monitor -b 115200
+
+
+
+
+```c
+// data[0]=0x02, data[1]=0x4D, data[2]=0x01, data[3]=0x20, data[4]=0x70
+uint8_t data[5] = {0x02, 0x4D, 0x01, 0x20, 0x70};
+uint8_t res1 = data[0] << 8 | data[1];
+
+0x24d
+```
+I (8820) DHT22_SAFE: data[0]=0x02, data[1]=0xA8, data[2]=0x01, data[3]=0x20, data[4]=0xCB
+I (8820) DHT22_SAFE: 1 => 200, 2 => 2A8
