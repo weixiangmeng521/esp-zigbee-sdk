@@ -21,6 +21,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "DHT22.h"
+#include "driver/gpio.h"
+
 
 /**
  * @brief:
@@ -34,10 +36,13 @@
 
 /* call back function pointer */
 static esp_temp_sensor_callback_t func_ptr;
-/* update interval in seconds */
-static uint16_t interval = 1;
 
+// powser GPIO
+static int POWER_GPIO = 10;
 static const char *TAG = "ESP_TEMP_SENSOR_DRIVER";
+TaskHandle_t xHandle = NULL;
+static int P_HIGHT = 0;
+static int P_LOW = 1;
 
 /**
  * @brief Tasks for updating the sensor value
@@ -45,21 +50,37 @@ static const char *TAG = "ESP_TEMP_SENSOR_DRIVER";
  * @param arg      Unused value.
  */
 static void temp_sensor_driver_value_update(void *arg)
-{
-    for (;;) {
-	    int res = readDHT();
-        
-		ESP_LOGI(TAG, "DHT Sensor Reading..." );
-        float temperature = getTemperature() / 10.0f;
-        float humidity    = getHumidity() / 10.0f;  
-                                                
-		vTaskDelay(5000 / portTICK_PERIOD_MS);
+{   
+    float temperature = 0;
+    float humidity    = 0;  
+    while(1){
+        gpio_set_level(POWER_GPIO, P_HIGHT);
 
+        // wait warm up
+        int warn_up_time = 1000;
+        ESP_LOGI(TAG, "Delay %dms for Warm up sensor...",  warn_up_time);
+        vTaskDelay(pdMS_TO_TICKS(warn_up_time));
+
+        // read dht data
+        int res = readDHT();
+
+        ESP_LOGI(TAG, "DHT Sensor Reading..." );
+        temperature = getTemperature() / 10.0f;
+        humidity    = getHumidity() / 10.0f;
+        
         // if read success and callback function is set, call it
         if (res == 1 && func_ptr) {
+            gpio_set_level(POWER_GPIO, P_LOW);
             func_ptr(temperature, humidity);
+
+            if(xHandle != NULL){
+                vTaskDelete(xHandle);
+                return;
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(interval * 1000));
+
+        // deply 1s
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -71,22 +92,27 @@ static void temp_sensor_driver_value_update(void *arg)
 static esp_err_t temp_sensor_driver_sensor_init(temperature_sensor_config_t *config)
 {
     // 2048
-    return (xTaskCreate(temp_sensor_driver_value_update, "sensor_update", 4096, NULL, 10, NULL) == pdTRUE) ? ESP_OK : ESP_FAIL;
+    return (xTaskCreate(temp_sensor_driver_value_update, "sensor_update", 4096, NULL, 10, &xHandle) == pdTRUE) ? ESP_OK : ESP_FAIL;
 }
 
 
 // Initialize temperature sensor
 esp_err_t temp_sensor_driver_init(
     temperature_sensor_config_t *config, 
-    uint16_t update_interval,
-    int gpio,
+    int data_gpio,
+    int power_gpio,
     esp_temp_sensor_callback_t cb
 ){   
     // set the DHT used pin
-    setDHTgpio(gpio);
+    setDHTgpio(data_gpio);
+    POWER_GPIO = power_gpio;
 
     func_ptr = cb;
-    interval = update_interval;
+
+    // set default GPIO
+    gpio_reset_pin(power_gpio);
+    gpio_set_direction(power_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_level(power_gpio, P_LOW);
 
     if (ESP_OK != temp_sensor_driver_sensor_init(config)) {
         return ESP_FAIL;

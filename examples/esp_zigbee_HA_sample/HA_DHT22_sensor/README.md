@@ -1,6 +1,11 @@
 | Supported Targets | ESP32-H2 | ESP32-C6 | ESP32-C5 |
 | ----------------- | -------- | -------- | -------- |
 
+### Reference
+https://github.com/MeryaneF/esp-zigbee-sdk/blob/dc28b23f0e3f41d051dc9bda5ef70599eee1a175/examples/esp_zigbee_sleep/deep_sleep/main/esp_zb_sleepy_end_device.c
+
+https://github.com/lmahmutov/esp32_c6_co2_sensor/blob/main/main/esp_zigbee_co2.c
+
 ### Go to folder
 cd ./examples/esp_zigbee_HA_sample/HA_DHT22_sensor
 
@@ -15,6 +20,8 @@ idf.py fullclean
 idf.py build
 idf.py -p /dev/tty.usbmodem1441401 flash -b 115200
 
+idf.py -p /dev/tty.usbmodem144101 flash -b 115200
+
 
 idf.py menuconfig
 idf.py fullclean
@@ -26,16 +33,12 @@ ls /dev/tty.*
 
 ### monitor
 idf.py -p /dev/tty.usbmodem1441401 monitor -b 115200
+idf.py -p /dev/tty.usbmodem5A360306451 monitor -b 115200
+idf.py -p /dev/tty.usbmodem144101 monitor -b 115200
+
+### 通过PMOS管供电，GPIO10控制
 
 
+### Deep Sleep
+20s 后自然唤醒
 
-
-```c
-// data[0]=0x02, data[1]=0x4D, data[2]=0x01, data[3]=0x20, data[4]=0x70
-uint8_t data[5] = {0x02, 0x4D, 0x01, 0x20, 0x70};
-uint8_t res1 = data[0] << 8 | data[1];
-
-0x24d
-```
-I (8820) DHT22_SAFE: data[0]=0x02, data[1]=0xA8, data[2]=0x01, data[3]=0x20, data[4]=0xCB
-I (8820) DHT22_SAFE: 1 => 200, 2 => 2A8

@@ -20,42 +20,83 @@
 #include "freertos/task.h"
 #include "ha/esp_zigbee_ha_standard.h"
 #include "sensor_driver.h"
+#include "esp_sleep.h"
+#include "driver/uart.h"
+#include "sys/time.h"
+#include "time.h"
+#include "driver/rtc_io.h"
+#include "esp_timer.h"
+#include "driver/gpio.h"
+
+
+#ifdef CONFIG_PM_ENABLE
+#include "esp_pm.h"
+#include "esp_private/esp_clk.h"
+#endif
 
 #if !defined ZB_ED_ROLE
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile sensor (End Device) source code.
 #endif
 
-
+static RTC_DATA_ATTR struct timeval s_sleep_enter_time;
+static esp_timer_handle_t s_oneshot_timer;
 
 
 static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 
-static int16_t zb_temperature_to_s16(float temp)
+
+
+static int16_t zb_float_to_s16(float temp)
 {
     return (int16_t)(temp * 100);
 }
 
 
+// 创建了一个 one-shot timer 对象
+static void s_oneshot_timer_callback(void* arg)
+{
+    /* Enter deep sleep */
+    ESP_LOGI(TAG, "Enter deep sleep");
+    gettimeofday(&s_sleep_enter_time, NULL);
+    esp_deep_sleep_start();
+}
+
+
+// 开始进入睡眠
+static void zb_deep_sleep_start(void)
+{
+    /* Start the one-shot timer */
+    const float before_deep_sleep_time_sec = 8;
+    ESP_LOGI(TAG, "Start one-shot timer for %.2fs to enter the deep sleep", before_deep_sleep_time_sec);
+    ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, before_deep_sleep_time_sec * 1000000));
+    // esp_deep_sleep_start();
+}
+
+// 获取sensor的数据
 static void esp_app_temp_sensor_handler(float temperature, float humidity)
 {
-
     ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", temperature, humidity);
 		    
     /* Update temperature sensor measured value */
     esp_zb_lock_acquire(portMAX_DELAY);
     // upload to zigbee
-    int16_t temp_s16 = zb_temperature_to_s16(temperature);
-    esp_zb_zcl_set_attribute_val(
+    int16_t temp_s16 = zb_float_to_s16(temperature);
+    esp_zb_zcl_status_t state_tmp = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT, 
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID, 
-        &temp_s16, 
+        &temp_s16,
         false
     );
+    /* Check for error */
+    if(state_tmp != ESP_ZB_ZCL_STATUS_SUCCESS)
+    {
+        ESP_LOGE(TAG, "Setting temperature attribute failed!");
+    }    
 
-    int16_t hum_s16 = zb_temperature_to_s16(humidity);
-    esp_zb_zcl_set_attribute_val(
+    int16_t hum_s16 = zb_float_to_s16(humidity);
+    esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
@@ -63,9 +104,18 @@ static void esp_app_temp_sensor_handler(float temperature, float humidity)
         &hum_s16,
         false
     );
+    /* Check for error */
+    if(state_hum != ESP_ZB_ZCL_STATUS_SUCCESS)
+    {
+        ESP_LOGE(TAG, "Setting humidity attribute failed!");
+    }
+
 
     esp_zb_lock_release();
-    ESP_LOGI(TAG, "Temperature and humidity updated done.");    
+    ESP_LOGI(TAG, "Temperature and humidity updated done.");
+
+    // going to sleep  
+    zb_deep_sleep_start();
 }
 
 // Callback to start top level commissioning
@@ -82,7 +132,7 @@ static esp_err_t deferred_driver_init(void)
     temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(ESP_TEMP_SENSOR_MIN_VALUE, ESP_TEMP_SENSOR_MAX_VALUE);
     if (!is_inited) {
         ESP_RETURN_ON_ERROR(
-            temp_sensor_driver_init(&temp_sensor_config, ESP_TEMP_SENSOR_UPDATE_INTERVAL, DHT22_GPIO, esp_app_temp_sensor_handler),
+            temp_sensor_driver_init(&temp_sensor_config, DHT22_GPIO, DHT22_POWER_GPIO, esp_app_temp_sensor_handler),
             TAG, "Failed to initialize temperature sensor");
 
         is_inited = true;
@@ -96,6 +146,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     uint32_t *p_sg_p     = signal_struct->p_app_signal;
     esp_err_t err_status = signal_struct->esp_err_status;
     esp_zb_app_signal_type_t sig_type = *p_sg_p;
+    esp_zb_zdo_signal_leave_params_t *leave_params = NULL;
+
     switch (sig_type) {
     case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
         ESP_LOGI(TAG, "Initialize Zigbee stack");
@@ -131,7 +183,17 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             ESP_LOGI(TAG, "Network steering was not successful (status: %s)", esp_err_to_name(err_status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb, ESP_ZB_BDB_MODE_NETWORK_STEERING, 1000);
         }
+        break;    
+    case ESP_ZB_ZDO_SIGNAL_LEAVE:
+        leave_params = (esp_zb_zdo_signal_leave_params_t *)esp_zb_app_signal_get_params(p_sg_p);
+        if (leave_params->leave_type == ESP_ZB_NWK_LEAVE_TYPE_RESET) {
+            ESP_LOGI(TAG, "Reset device");
+            esp_zb_factory_reset();
+        }
         break;
+    case ESP_ZB_COMMON_SIGNAL_CAN_SLEEP:
+        ESP_LOGI(TAG, "Can sleep");   
+        break;             
     default:
         ESP_LOGI(TAG, "ZDO signal: %s (0x%x), status: %s", esp_zb_zdo_signal_to_string(sig_type), sig_type,
                  esp_err_to_name(err_status));
@@ -155,8 +217,8 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
     //  Add humidity measurement cluster
     esp_zb_humidity_meas_cluster_cfg_t humidity_sensor_cfg = {
         .measured_value = 0,
-        .min_value = zb_temperature_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE),
-        .max_value = zb_temperature_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE),
+        .min_value = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE),
+        .max_value = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE),
     };        
     // Add humidity measurement cluster
     ESP_ERROR_CHECK(
@@ -214,6 +276,69 @@ static esp_zb_ep_list_t *custom_temperature_sensor_ep_create(uint8_t endpoint_id
 // }
 
 
+static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t *message)
+{
+    esp_err_t ret = ESP_OK;
+
+    ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
+    ESP_RETURN_ON_FALSE(message->info.status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG, "Received message: error status(%d)",
+                        message->info.status);
+    ESP_LOGI(TAG, "Received message: endpoint(%d), cluster(0x%x), attribute(0x%x), data size(%d)", message->info.dst_endpoint, message->info.cluster,
+             message->attribute.id, message->attribute.data.size);
+    if (message->info.dst_endpoint == HA_ESP_SENSOR_ENDPOINT) {
+        if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF) {
+            if (message->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_BOOL) {
+                switch (message->info.cluster) {
+                case ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY:
+                    ESP_LOGI(TAG, "Identify pressed");
+                    break;
+                default:
+                    ESP_LOGI(TAG, "Message data: cluster(0x%x), attribute(0x%x)  ", message->info.cluster, message->attribute.id);
+                }
+            }
+        }
+    }
+    return ret;
+}
+
+// default messahe handler
+static esp_err_t zb_default_resp_handler(esp_zb_zcl_cmd_default_resp_message_t *resp)
+{
+    ESP_LOGI(TAG, "Default Response received:");
+    ESP_LOGI(TAG, "  Status: 0x%x", resp->status_code);
+    ESP_LOGI(TAG, "  Source Endpoint: %d", resp->info.src_endpoint);
+    ESP_LOGI(TAG, "  Destination Endpoint: %d", resp->info.dst_endpoint);
+    ESP_LOGI(TAG, "  Command ID: 0x%x", resp->resp_to_cmd);
+
+    // 根据状态判断命令是否成功
+    if (resp->status_code == ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGI(TAG, "Command executed successfully!");
+    } else {
+        ESP_LOGW(TAG, "Command failed with status: 0x%x", resp->status_code);
+    }
+    return ESP_OK;
+}
+
+// action
+static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id, const void *message)
+{
+    esp_err_t ret = ESP_OK;
+    switch (callback_id) {
+    case ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID:
+        ret = zb_attribute_handler((esp_zb_zcl_set_attr_value_message_t *)message);
+        break; 
+    case ESP_ZB_CORE_CMD_DEFAULT_RESP_CB_ID:
+        ret = zb_default_resp_handler((esp_zb_zcl_cmd_default_resp_message_t *)message);
+        break;
+    default:
+        ESP_LOGW(TAG, "Receive Zigbee action(0x%x) callback", callback_id);
+        break;
+    }
+    return ret;
+}
+
+
+
 // Zigbee stack main task
 static void esp_zb_task(void *pvParameters)
 {
@@ -224,8 +349,8 @@ static void esp_zb_task(void *pvParameters)
     /* Create customized temperature sensor endpoint */
     esp_zb_temperature_sensor_cfg_t sensor_cfg = ESP_ZB_DEFAULT_TEMPERATURE_SENSOR_CONFIG();
     /* Set (Min|Max)MeasuredValure */
-    sensor_cfg.temp_meas_cfg.min_value = zb_temperature_to_s16(ESP_TEMP_SENSOR_MIN_VALUE);
-    sensor_cfg.temp_meas_cfg.max_value = zb_temperature_to_s16(ESP_TEMP_SENSOR_MAX_VALUE);
+    sensor_cfg.temp_meas_cfg.min_value = zb_float_to_s16(ESP_TEMP_SENSOR_MIN_VALUE);
+    sensor_cfg.temp_meas_cfg.max_value = zb_float_to_s16(ESP_TEMP_SENSOR_MAX_VALUE);
     esp_zb_ep_list_t *esp_zb_sensor_ep = custom_temperature_sensor_ep_create(HA_ESP_SENSOR_ENDPOINT, &sensor_cfg);
 
     /* Register the device */
@@ -239,7 +364,7 @@ static void esp_zb_task(void *pvParameters)
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
         .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 0,
+        .u.send_info.max_interval = 20,
         .u.send_info.def_min_interval = 1,
         .u.send_info.def_max_interval = 0,
         .u.send_info.delta.u16 = 100,
@@ -256,7 +381,7 @@ static void esp_zb_task(void *pvParameters)
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
         .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 0,
+        .u.send_info.max_interval = 20,
         .u.send_info.def_min_interval = 1,
         .u.send_info.def_max_interval = 0,
         .u.send_info.delta.u16 = 100,
@@ -266,9 +391,74 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_zcl_update_reporting_info(&reporting_hum_info);
 
     // ------------------------------ Register Device ------------------------------
+    esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_stack_main_loop();
+}
+
+
+
+/**
+ * @brief deep sleep
+ * 
+ */
+static void zb_deep_sleep_init(void)
+{
+    /* Within this function, we print the reason for the wake-up and configure the method of waking up from deep sleep.
+    This example provides support for two wake-up sources from deep sleep: RTC timer and GPIO. */
+
+    /* The one-shot timer will start when the device transitions to the CHILD state for the first time.
+    After 0.3-second delay, the device will enter deep sleep. */
+
+    const esp_timer_create_args_t s_oneshot_timer_args = {
+        .callback = &s_oneshot_timer_callback,
+        .name = "one-shot"
+    };
+
+    ESP_ERROR_CHECK(esp_timer_create(&s_oneshot_timer_args, &s_oneshot_timer));
+
+
+    // Print the wake-up reason:
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    int sleep_time_ms = (now.tv_sec - s_sleep_enter_time.tv_sec) * 1000 + (now.tv_usec - s_sleep_enter_time.tv_usec) / 1000;
+    esp_sleep_wakeup_cause_t wake_up_cause = esp_sleep_get_wakeup_cause();
+    switch (wake_up_cause) {
+    case ESP_SLEEP_WAKEUP_TIMER: {
+        ESP_LOGI(TAG, "Wake up from timer. Time spent in deep sleep and boot: %dms", sleep_time_ms);
+        break;
+    }
+    case ESP_SLEEP_WAKEUP_EXT1: {
+        ESP_LOGI(TAG, "Wake up from GPIO. Time spent in deep sleep and boot: %dms", sleep_time_ms);
+        break;
+    }
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+        ESP_LOGI(TAG, "Not a deep sleep reset");
+        break;
+    }
+
+    /* Set the methods of how to wake up: */
+    /* 1. RTC timer waking-up */
+    ESP_LOGI(TAG, "Enabling timer wakeup, %ds", WAKE_UP_TIME_SEC);
+    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(WAKE_UP_TIME_SEC * 1000000ULL));
+    ESP_LOGI(TAG, "Set wakeup timer done");
+
+    const int gpio_wakeup_pin = 9;
+    const uint64_t gpio_wakeup_pin_mask = 1ULL << gpio_wakeup_pin;
+    /* The configuration mode depends on your hardware design.
+    Since the BOOT button is connected to a pull-up resistor, the wake-up mode is configured as LOW. */
+    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(gpio_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_LOW));
+
+    /* Also these two GPIO configurations are also depended on the hardware design.
+    The BOOT button is connected to the pull-up resistor, so enable the pull-up mode and disable the pull-down mode.
+
+    Notice: if these GPIO configurations do not match the hardware design, the deep sleep module will enable the GPIO hold
+    feature to hold the GPIO voltage when enter the sleep, which will ensure the board be waked up by GPIO. But it will cause
+    3~4 times power consumption increasing during sleep. */
+    ESP_ERROR_CHECK(gpio_pullup_en(gpio_wakeup_pin));
+    ESP_ERROR_CHECK(gpio_pulldown_dis(gpio_wakeup_pin));    
 }
 
 // Application main entry point
@@ -280,6 +470,9 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
+
+    // set deep sleep
+    zb_deep_sleep_init();
 
     /* Start Zigbee stack task */
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);

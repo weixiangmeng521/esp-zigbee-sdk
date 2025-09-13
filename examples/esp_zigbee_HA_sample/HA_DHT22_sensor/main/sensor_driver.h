@@ -31,12 +31,11 @@ typedef void (*esp_temp_sensor_callback_t)(float temperature, float humidity);
  * @brief init function for temp sensor and callback setup
  *
  * @param config                pointer of temperature sensor config.
- * @param update_interval       sensor value update interval in seconds.
  * @param cb                    callback pointer.
  *
  * @return ESP_OK if the driver initialization succeed, otherwise ESP_FAIL.
  */
-esp_err_t temp_sensor_driver_init(temperature_sensor_config_t *config, uint16_t update_interval, int gpio, esp_temp_sensor_callback_t cb);
+esp_err_t temp_sensor_driver_init(temperature_sensor_config_t *config, int data_gpio, int power_gpio, esp_temp_sensor_callback_t cb);
 
 #ifdef __cplusplus
 } // extern "C"

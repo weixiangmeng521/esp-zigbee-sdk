@@ -17,24 +17,26 @@
 /* Zigbee configuration */
 #define INSTALLCODE_POLICY_ENABLE       false   /* enable the install code policy for security */
 #define ED_AGING_TIMEOUT                ESP_ZB_ED_AGING_TIMEOUT_64MIN
-#define ED_KEEP_ALIVE                   3000    /* 3000 millisecond */
+#define ED_KEEP_ALIVE                   4000    /* 4000 millisecond */
 #define HA_ESP_SENSOR_ENDPOINT          10      /* esp temperature sensor device endpoint, used for temperature measurement */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK    /* Zigbee primary channel mask use in the example */
-
-#define ESP_TEMP_SENSOR_UPDATE_INTERVAL (1)     /* Local sensor update interval (second) */
 
 // DHT22 data pin
 #define DHT22_GPIO 14
 
+// DHT22 power pin
+#define DHT22_POWER_GPIO 10
 
+// Deep sleep second
+#define WAKE_UP_TIME_SEC                (10)
 
 // Temperature
 #define ESP_TEMP_SENSOR_MIN_VALUE       (-40)   /* Local sensor min measured value (degree Celsius) */
 #define ESP_TEMP_SENSOR_MAX_VALUE       (80)    /* Local sensor max measured value (degree Celsius) */
 
 // Humidity
-#define ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE       (0)      /*  Relative Humidity Measurement value min */
-#define ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE       (100)    /* Relative Humidity Measurement value  max */
+#define ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE       (0)      /* Relative Humidity Measurement value min */
+#define ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE       (100)    /* Relative Humidity Measurement value max */
 
 /* Attribute values in ZCL string format
  * The string should be started with the length of its own.
