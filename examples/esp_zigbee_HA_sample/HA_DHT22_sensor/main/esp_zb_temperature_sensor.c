@@ -57,13 +57,10 @@ static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 // Zigbee 规范里常用的无效值
 #define ZB_ZCL_ATTR_INT16S_INVALID 0x8000
 
-static int16_t undefined_value = ZB_ZCL_ATTR_INT16S_INVALID;
 
-
-
-static int16_t zb_float_to_s16(float temp)
+static uint16_t zb_float_to_s16(float temp)
 {
-    return (int16_t)roundf(temp * 100);
+    return (uint16_t)roundf(temp * 100);
 }
 
 
@@ -87,13 +84,15 @@ static void zb_deep_sleep_start(void)
 }
 
 // upload temperature data.
-static void updata_attribute_for_temperature(float temperature){
-    if(fabs(temperature - last_temperature) <= TEMP_DELTA) {
+static void updata_attribute_for_temperature(uint16_t temperature){
+    float temp_f = temperature / 10.0f;
+
+    if(fabs(temp_f - last_temperature) <= TEMP_DELTA) {
         ESP_LOGI(TAG, "It doesnt need to update temperature.");
         return;
     }
     // upload to zigbee
-    int16_t temp_s16 = zb_float_to_s16(temperature);
+    uint16_t temp_s16 = temperature * 10;
     esp_zb_zcl_status_t state_tmp = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT, 
@@ -104,26 +103,36 @@ static void updata_attribute_for_temperature(float temperature){
     );
     /* Check for error */
     if(state_tmp != ESP_ZB_ZCL_STATUS_SUCCESS){
-        ESP_LOGE(TAG, "Setting temperature attribute failed!");
+        ESP_LOGE(TAG, "Failed to set temperature: 0x%x", state_tmp);        
         return;
     }
     // update last memeory
-	last_temperature = temperature;    
-    ESP_LOGI(TAG, "Temperature has updated done.");
+	last_temperature = temp_f;
+    ESP_LOGI(TAG, "Temperature has updated done: 0x%04X", temperature);
 }
 
-// upload humidity data.
-static void updata_attribute_for_humidity(float humidity){
-    if(fabs(humidity - last_humidity) <= HUM_DELTA) {
+
+/**
+ * @brief upload humidity data.
+ * 
+ * @param humidity 
+ */
+static void updata_attribute_for_humidity(uint16_t humidity){
+    float hum_f = humidity / 10.0f;
+
+    // 检查无效值
+    if (hum_f < 0.0f || hum_f > 100.0f) {
+        ESP_LOGE(TAG, "Invalid humidity: %.2f", hum_f);
+        return;
+    }
+
+    // 判断是否需要更新
+    if (fabs(hum_f - last_humidity) <= HUM_DELTA) {
         ESP_LOGI(TAG, "It doesnt need to update humidity.");
         return;
     }    
-    int16_t hum_s16 = zb_float_to_s16(humidity);
 
-    // TODO: DHT22 读失败 / 无效值
-    // if (hum_s16 == -32768) {
-    // }
-
+    uint16_t hum_s16 = humidity * 10;
     esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
@@ -134,18 +143,18 @@ static void updata_attribute_for_humidity(float humidity){
     );
     /* Check for error */
     if(state_hum != ESP_ZB_ZCL_STATUS_SUCCESS){
-        ESP_LOGE(TAG, "Setting humidity attribute failed!");
+        ESP_LOGE(TAG, "Failed to set humidity: 0x%x", state_hum);
         return;
     }
     // update last memeory
-    last_humidity = humidity;
-    ESP_LOGI(TAG, "Humidity has updated done.");
+    last_humidity = hum_f;
+    ESP_LOGI(TAG, "Humidity has updated done: 0x%04X", humidity);
 }
 
 // 获取sensor的数据
-static void esp_app_temp_sensor_handler(float temperature, float humidity)
+static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
 {
-    ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", temperature, humidity);
+    ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", (temperature / 10.0f), (humidity / 10.0f));
 
     /* Update temperature sensor measured value */
     esp_zb_lock_acquire(portMAX_DELAY);
@@ -269,10 +278,11 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
 
     
     //  Add humidity measurement cluster
-    int16_t min_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE);
-    int16_t max_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE);
+    uint16_t min_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE);
+    uint16_t max_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE);
+    uint16_t last_s16_hum = last_humidity == 0 ? ESP_ZB_ZCL_REL_HUMIDITY_MEASUREMENT_MEASURED_VALUE_DEFAULT : (uint16_t)(last_humidity * 100);
     esp_zb_attribute_list_t *esp_zb_humidity_meas_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT);
-    esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &undefined_value);
+    esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &last_s16_hum);
     esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_MIN_VALUE_ID, &min_humidity);
     esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_MAX_VALUE_ID, &max_humidity);
 
@@ -398,7 +408,9 @@ static void esp_zb_task(void *pvParameters)
 
     /* Create customized temperature sensor endpoint */
     esp_zb_temperature_sensor_cfg_t sensor_cfg = ESP_ZB_DEFAULT_TEMPERATURE_SENSOR_CONFIG();
-    /* Set (Min|Max)MeasuredValure */
+    uint16_t last_s16_tmp = last_temperature == 0 ? ESP_ZB_ZCL_TEMP_MEASUREMENT_MEASURED_VALUE_DEFAULT : (uint16_t)(last_temperature * 100);
+    /* Set (Min|Max|Real)MeasuredValure */
+    sensor_cfg.temp_meas_cfg.measured_value = last_s16_tmp;
     sensor_cfg.temp_meas_cfg.min_value = zb_float_to_s16(ESP_TEMP_SENSOR_MIN_VALUE);
     sensor_cfg.temp_meas_cfg.max_value = zb_float_to_s16(ESP_TEMP_SENSOR_MAX_VALUE);
     esp_zb_ep_list_t *esp_zb_sensor_ep = custom_temperature_sensor_ep_create(HA_ESP_SENSOR_ENDPOINT, &sensor_cfg);
@@ -417,7 +429,7 @@ static void esp_zb_task(void *pvParameters)
         .u.send_info.max_interval = 60,
         .u.send_info.def_min_interval = 1,
         .u.send_info.def_max_interval = 0,
-        .u.send_info.delta.u16 = 100,
+        .u.send_info.delta.u16 = (uint16_t)(TEMP_DELTA * 10),
         .attr_id = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
@@ -434,7 +446,7 @@ static void esp_zb_task(void *pvParameters)
         .u.send_info.max_interval = 60,
         .u.send_info.def_min_interval = 1,
         .u.send_info.def_max_interval = 0,
-        .u.send_info.delta.u16 = 100,
+        .u.send_info.delta.u16 = (uint16_t)(HUM_DELTA * 10),
         .attr_id = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };

@@ -51,8 +51,8 @@ static int P_LOW = 0;
  */
 static void temp_sensor_driver_value_update(void *arg)
 {   
-    float temperature      = 0;
-    float humidity         = 0;
+    uint16_t temperature      = 0;
+    uint16_t humidity         = 0;
     int retry_index        = 0;
     int retry_times_list[] = {300, 600, 1200, 2400, 4800, 9600};
     int retry_count        = sizeof(retry_times_list) / sizeof(retry_times_list[0]);
@@ -70,8 +70,8 @@ static void temp_sensor_driver_value_update(void *arg)
         int res = readDHT();
 
         ESP_LOGI(TAG, "DHT Sensor Reading..." );
-        temperature = getTemperature() / 10.0f;
-        humidity    = getHumidity() / 10.0f;
+        temperature = getTemperature();
+        humidity    = getHumidity();
         
         // if read success and callback function is set, 
         // call it

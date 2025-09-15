@@ -25,7 +25,7 @@ extern "C" {
  * @param[in] temperature temperature value in degrees Celsius from sensor
  *
  */
-typedef void (*esp_temp_sensor_callback_t)(float temperature, float humidity);
+typedef void (*esp_temp_sensor_callback_t)(uint16_t temperature, uint16_t humidity);
 
 typedef void (*esp_temp_sensor_fallback_callback_t)();
 

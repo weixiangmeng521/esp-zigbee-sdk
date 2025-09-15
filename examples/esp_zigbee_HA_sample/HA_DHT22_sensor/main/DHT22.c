@@ -6,8 +6,8 @@
 #include "freertos/task.h"
 
 static const char *TAG = "DHT22_SAFE";
-static float humidity = 0.0f;
-static float temperature = 0.0f;
+static uint16_t humidity = 0.0f;
+static uint16_t temperature = 0.0f;
 static int pin = 4;
 
 /*
@@ -138,10 +138,20 @@ char readDHT()
     return 1;
 }
 
+/**
+ * @brief Get the Humidity object
+ * 
+ * @return uint16_t 
+ */
 uint16_t getHumidity(void) {
     return humidity;
 }
 
+/**
+ * @brief Get the Temperature object
+ * 
+ * @return uint16_t 
+ */
 uint16_t getTemperature(void) {
     return temperature;
 }
