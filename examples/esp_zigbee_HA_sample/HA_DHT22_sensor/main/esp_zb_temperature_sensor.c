@@ -37,7 +37,18 @@
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile sensor (End Device) source code.
 #endif
 
+// upload only when the temperature changes by more than 0.5°C
+#define TEMP_DELTA 0.5f     
+// Humidity change exceeds 1%RH before uploading
+#define HUM_DELTA  1.0f     
+// last sleep enter time
 static RTC_DATA_ATTR struct timeval s_sleep_enter_time;
+// last measured temperature
+static RTC_DATA_ATTR float last_temperature = 0;
+// last measured humidity
+static RTC_DATA_ATTR float last_humidity    = 0;
+
+// one shot timer
 static esp_timer_handle_t s_oneshot_timer;
 
 
@@ -75,13 +86,12 @@ static void zb_deep_sleep_start(void)
     ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, before_deep_sleep_time_sec * 1000000));
 }
 
-// 获取sensor的数据
-static void esp_app_temp_sensor_handler(float temperature, float humidity)
-{
-    ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", temperature, humidity);
-		    
-    /* Update temperature sensor measured value */
-    esp_zb_lock_acquire(portMAX_DELAY);
+// upload temperature data.
+static void updata_attribute_for_temperature(float temperature){
+    if(fabs(temperature - last_temperature) <= TEMP_DELTA) {
+        ESP_LOGI(TAG, "It doesnt need to update temperature.");
+        return;
+    }
     // upload to zigbee
     int16_t temp_s16 = zb_float_to_s16(temperature);
     esp_zb_zcl_status_t state_tmp = esp_zb_zcl_set_attribute_val(
@@ -93,12 +103,23 @@ static void esp_app_temp_sensor_handler(float temperature, float humidity)
         false
     );
     /* Check for error */
-    if(state_tmp != ESP_ZB_ZCL_STATUS_SUCCESS)
-    {
+    if(state_tmp != ESP_ZB_ZCL_STATUS_SUCCESS){
         ESP_LOGE(TAG, "Setting temperature attribute failed!");
-    }    
+        return;
+    }
+    // update last memeory
+	last_temperature = temperature;    
+    ESP_LOGI(TAG, "Temperature has updated done.");
+}
 
+// upload humidity data.
+static void updata_attribute_for_humidity(float humidity){
+    if(fabs(humidity - last_humidity) <= HUM_DELTA) {
+        ESP_LOGI(TAG, "It doesnt need to update humidity.");
+        return;
+    }    
     int16_t hum_s16 = zb_float_to_s16(humidity);
+
     // TODO: DHT22 读失败 / 无效值
     // if (hum_s16 == -32768) {
     // }
@@ -112,14 +133,25 @@ static void esp_app_temp_sensor_handler(float temperature, float humidity)
         false
     );
     /* Check for error */
-    if(state_hum != ESP_ZB_ZCL_STATUS_SUCCESS)
-    {
+    if(state_hum != ESP_ZB_ZCL_STATUS_SUCCESS){
         ESP_LOGE(TAG, "Setting humidity attribute failed!");
+        return;
     }
+    // update last memeory
+    last_humidity = humidity;
+    ESP_LOGI(TAG, "Humidity has updated done.");
+}
 
+// 获取sensor的数据
+static void esp_app_temp_sensor_handler(float temperature, float humidity)
+{
+    ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", temperature, humidity);
 
+    /* Update temperature sensor measured value */
+    esp_zb_lock_acquire(portMAX_DELAY);
+    updata_attribute_for_temperature(temperature);
+    updata_attribute_for_humidity(humidity);
     esp_zb_lock_release();
-    ESP_LOGI(TAG, "Temperature and humidity updated done.");
 
     // going to sleep  
     zb_deep_sleep_start();
