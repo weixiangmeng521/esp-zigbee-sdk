@@ -361,21 +361,131 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
     return ret;
 }
 
-// default messahe handler
-static esp_err_t zb_default_resp_handler(esp_zb_zcl_cmd_default_resp_message_t *resp)
-{
-    ESP_LOGI(TAG, "Default Response received:");
-    ESP_LOGI(TAG, "  Status: 0x%x", resp->status_code);
-    ESP_LOGI(TAG, "  Source Endpoint: %d", resp->info.src_endpoint);
-    ESP_LOGI(TAG, "  Destination Endpoint: %d", resp->info.dst_endpoint);
-    ESP_LOGI(TAG, "  Command ID: 0x%x", resp->resp_to_cmd);
 
-    // 根据状态判断命令是否成功
-    if (resp->status_code == ESP_ZB_ZCL_STATUS_SUCCESS) {
-        ESP_LOGI(TAG, "Command executed successfully!");
-    } else {
-        ESP_LOGW(TAG, "Command failed with status: 0x%x", resp->status_code);
+void zb_log_esp_zb_zcl_cmd_info_t(const char* prefix, const esp_zb_zcl_cmd_info_t *info)
+{
+    ESP_LOGI(TAG, "%s:\n  From address(0x%x) src endpoint(%d)\n  To address (0x%x) endpoint(%d)\n    cluster(0x%x) profile(0x%x) transaction(%d)\n    cmd id(0x%x) direction(0x%x) is_common(0x%x)",
+        prefix,
+        info->src_address.u.short_addr, 
+        info->src_endpoint,
+        info->dst_address, 
+        info->dst_endpoint, 
+        info->cluster,
+        info->profile,
+        info->header.tsn,
+        info->command.id,
+        info->command.direction,
+        info->command.is_common
+    );
+}
+
+// response to the ESP_ZB_CORE_REPORT_ATTR_CB_ID callback
+esp_err_t zb_cmd_default_resp_handler(const esp_zb_zcl_cmd_default_resp_message_t *message)
+{
+    ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
+    ESP_RETURN_ON_FALSE(message->info.status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG, "Received message: error status(%d)",
+                        message->info.status);
+    zb_log_esp_zb_zcl_cmd_info_t("Command default response", &message->info);
+    ESP_LOGI(TAG, "Default Response: Status: 0x%04x, To Command: 0x%x", message->status_code, message->resp_to_cmd);
+    return ESP_OK;
+}
+
+
+// response to the ESP_ZB_CORE_REPORT_ATTR_CB_ID callback
+esp_err_t zb_attribute_reporting_handler(const esp_zb_zcl_report_attr_message_t *message)
+{
+    ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
+    ESP_RETURN_ON_FALSE(message->status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG, "Received message: error status(%d)",
+        message->status);
+    ESP_LOGI(TAG, "Report received from address(0x%x) src endpoint(%d) to dst endpoint(%d) cluster(0x%x) attribute(0x%x) type(0x%x)",
+        message->src_address.u.short_addr, 
+        message->src_endpoint,
+        message->dst_endpoint, 
+        message->cluster,
+        message->attribute.id,
+        message->attribute.data.type
+    );
+    return ESP_OK;
+}
+
+
+// response to the ESP_ZB_CORE_CMD_READ_ATTR_RESP_CB_ID callback: TODO check if needed
+esp_err_t zb_read_attr_resp_handler(const esp_zb_zcl_cmd_read_attr_resp_message_t *message)
+{
+    ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
+    ESP_RETURN_ON_FALSE(message->info.status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG, "Received message: error status(%d)",
+                        message->info.status);
+
+    ESP_LOGI(TAG, "Read attribute response: from address(0x%x) src endpoint(%d) to dst endpoint(%d) cluster(0x%x) transaction(0x%x)",
+             message->info.src_address.u.short_addr, 
+             message->info.src_endpoint,
+             message->info.dst_endpoint, 
+             message->info.cluster,
+             message->info.header.tsn
+    );
+
+    esp_zb_zcl_read_attr_resp_variable_t *variable = message->variables;
+    while (variable) {
+        ESP_LOGI(TAG, "Read attribute response variable: status(%d), cluster(0x%x), attribute(0x%x), type(0x%x), value(%d)",
+            variable->status, 
+            message->info.cluster,
+            variable->attribute.id, 
+            variable->attribute.data.type,
+            variable->attribute.data.value ? *(uint8_t *)variable->attribute.data.value : 0
+        );
+        variable = variable->next;
     }
+
+    return ESP_OK;
+}
+
+// response to the ESP_ZB_CORE_CMD_READ_ATTR_RESP_CB_ID callback: TODO check if needed
+esp_err_t zb_write_attr_resp_handler(const esp_zb_zcl_cmd_write_attr_resp_message_t *message)
+{
+    ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
+    ESP_RETURN_ON_FALSE(message->info.status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG, "Received message: error status(%d)",
+                        message->info.status);
+
+    ESP_LOGI(TAG, "Write attribute response: from address(0x%x) src endpoint(%d) to dst endpoint(%d) cluster(0x%x) transaction(%d)",
+        message->info.src_address.u.short_addr, 
+        message->info.src_endpoint,
+        message->info.dst_endpoint, 
+        message->info.cluster,
+        message->info.header.tsn
+    );
+
+    esp_zb_zcl_write_attr_resp_variable_t *variable = message->variables;
+    while (variable) {
+        ESP_LOGI(TAG, "Write attribute response: status(%d), attribute(0x%x)",
+                    variable->status,
+                    variable->attribute_id);
+        variable = variable->next;
+    }
+
+    return ESP_OK;
+}
+
+
+// response to report config command
+esp_err_t zb_configure_report_resp_handler(const esp_zb_zcl_cmd_config_report_resp_message_t *message)
+{
+    ESP_RETURN_ON_FALSE(message, ESP_FAIL, TAG, "Empty message");
+    ESP_RETURN_ON_FALSE(message->info.status == ESP_ZB_ZCL_STATUS_SUCCESS, ESP_ERR_INVALID_ARG, TAG, "Received message: error status(%d)",
+                        message->info.status);
+
+    zb_log_esp_zb_zcl_cmd_info_t("Configure report response", &message->info);
+
+    esp_zb_zcl_config_report_resp_variable_t *variable = message->variables;
+    while (variable) {
+        ESP_LOGI(TAG, "Configure report response: status(%d), cluster(0x%x), direction(0x%x), attribute(0x%x)",
+            variable->status, 
+            message->info.cluster, 
+            variable->direction, 
+            variable->attribute_id
+        );
+        variable = variable->next;
+    }
+
     return ESP_OK;
 }
 
@@ -384,11 +494,23 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
 {
     esp_err_t ret = ESP_OK;
     switch (callback_id) {
+    case ESP_ZB_CORE_REPORT_ATTR_CB_ID:
+        ret = zb_attribute_reporting_handler((esp_zb_zcl_report_attr_message_t *)message);
+        break;
     case ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID:
         ret = zb_attribute_handler((esp_zb_zcl_set_attr_value_message_t *)message);
         break; 
+    case ESP_ZB_CORE_CMD_WRITE_ATTR_RESP_CB_ID:
+        ret = zb_write_attr_resp_handler((esp_zb_zcl_cmd_write_attr_resp_message_t *)message);
+        break;        
+    case ESP_ZB_CORE_CMD_READ_ATTR_RESP_CB_ID:
+        ret = zb_read_attr_resp_handler((esp_zb_zcl_cmd_read_attr_resp_message_t *)message);
+        break;        
+    case ESP_ZB_CORE_CMD_REPORT_CONFIG_RESP_CB_ID:
+        ret = zb_configure_report_resp_handler((esp_zb_zcl_cmd_config_report_resp_message_t *)message);
+        break;        
     case ESP_ZB_CORE_CMD_DEFAULT_RESP_CB_ID:
-        ret = zb_default_resp_handler((esp_zb_zcl_cmd_default_resp_message_t *)message);
+        ret = zb_cmd_default_resp_handler((esp_zb_zcl_cmd_default_resp_message_t *)message);
         break;
     default:
         ESP_LOGW(TAG, "Receive Zigbee action(0x%x) callback", callback_id);
@@ -425,15 +547,18 @@ static void esp_zb_task(void *pvParameters)
         .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 60,
-        .u.send_info.def_min_interval = 1,
-        .u.send_info.def_max_interval = 0,
-        .u.send_info.delta.u16 = (uint16_t)(TEMP_DELTA * 10),
+        .u.send_info.min_interval = 0,
+        .u.send_info.max_interval = 0,
+        // .u.send_info.def_min_interval = 1,
+        // .u.send_info.def_max_interval = 300,
+        .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
-    esp_zb_zcl_update_reporting_info(&reporting_temp_info);
+    esp_err_t temp_report_err = esp_zb_zcl_update_reporting_info(&reporting_temp_info);
+    if(temp_report_err != ESP_OK){
+        ESP_LOGE(TAG, "ZCL temperature report fail: %s", esp_err_to_name(temp_report_err));
+    }
 
     /* Config the reporting info  */
     esp_zb_zcl_reporting_info_t reporting_hum_info = {
@@ -442,15 +567,18 @@ static void esp_zb_task(void *pvParameters)
         .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 60,
-        .u.send_info.def_min_interval = 1,
-        .u.send_info.def_max_interval = 0,
-        .u.send_info.delta.u16 = (uint16_t)(HUM_DELTA * 10),
+        .u.send_info.min_interval = 0,
+        .u.send_info.max_interval = 0,
+        // .u.send_info.def_min_interval = 1,
+        // .u.send_info.def_max_interval = 300,
+        .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
-    esp_zb_zcl_update_reporting_info(&reporting_hum_info);
+    esp_err_t humi_report_err = esp_zb_zcl_update_reporting_info(&reporting_hum_info);
+    if(humi_report_err != ESP_OK){
+        ESP_LOGE(TAG, "ZCL humidity report fail: %s", esp_err_to_name(humi_report_err));
+    }
 
     // ------------------------------ Register Device ------------------------------
     esp_zb_core_action_handler_register(zb_action_handler);
