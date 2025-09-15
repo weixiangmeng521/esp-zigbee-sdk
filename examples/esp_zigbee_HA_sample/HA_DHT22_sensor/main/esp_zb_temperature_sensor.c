@@ -12,7 +12,7 @@
  * CONDITIONS OF ANY KIND, either express or implied.
  */
 #include "esp_zb_temperature_sensor.h"
-
+#include <math.h>
 #include "esp_check.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -27,7 +27,6 @@
 #include "driver/rtc_io.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
-
 
 #ifdef CONFIG_PM_ENABLE
 #include "esp_pm.h"
@@ -44,11 +43,16 @@ static esp_timer_handle_t s_oneshot_timer;
 
 static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 
+// Zigbee 规范里常用的无效值
+#define ZB_ZCL_ATTR_INT16S_INVALID 0x8000
+
+static int16_t undefined_value = ZB_ZCL_ATTR_INT16S_INVALID;
+
 
 
 static int16_t zb_float_to_s16(float temp)
 {
-    return (int16_t)(temp * 100);
+    return (int16_t)roundf(temp * 100);
 }
 
 
@@ -66,10 +70,9 @@ static void s_oneshot_timer_callback(void* arg)
 static void zb_deep_sleep_start(void)
 {
     /* Start the one-shot timer */
-    const float before_deep_sleep_time_sec = 8;
+    const float before_deep_sleep_time_sec = 10;
     ESP_LOGI(TAG, "Start one-shot timer for %.2fs to enter the deep sleep", before_deep_sleep_time_sec);
     ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, before_deep_sleep_time_sec * 1000000));
-    // esp_deep_sleep_start();
 }
 
 // 获取sensor的数据
@@ -96,6 +99,10 @@ static void esp_app_temp_sensor_handler(float temperature, float humidity)
     }    
 
     int16_t hum_s16 = zb_float_to_s16(humidity);
+    // TODO: DHT22 读失败 / 无效值
+    // if (hum_s16 == -32768) {
+    // }
+
     esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
@@ -118,6 +125,14 @@ static void esp_app_temp_sensor_handler(float temperature, float humidity)
     zb_deep_sleep_start();
 }
 
+// if read data fail, then callback
+static void esp_app_temp_sensor_fallback_handler(){
+    // going to sleep directly     
+    ESP_LOGI(TAG, "Going to sleep directly.");
+    ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, 1));
+}
+
+
 // Callback to start top level commissioning
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 {
@@ -132,7 +147,13 @@ static esp_err_t deferred_driver_init(void)
     temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(ESP_TEMP_SENSOR_MIN_VALUE, ESP_TEMP_SENSOR_MAX_VALUE);
     if (!is_inited) {
         ESP_RETURN_ON_ERROR(
-            temp_sensor_driver_init(&temp_sensor_config, DHT22_GPIO, DHT22_POWER_GPIO, esp_app_temp_sensor_handler),
+            temp_sensor_driver_init(
+                &temp_sensor_config, 
+                DHT22_GPIO, 
+                DHT22_POWER_GPIO, 
+                esp_app_temp_sensor_handler,
+                esp_app_temp_sensor_fallback_handler
+            ),
             TAG, "Failed to initialize temperature sensor");
 
         is_inited = true;
@@ -214,20 +235,17 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_temperature_meas_cluster(cluster_list, esp_zb_temperature_meas_cluster_create(&(sensor->temp_meas_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
 
+    
     //  Add humidity measurement cluster
-    esp_zb_humidity_meas_cluster_cfg_t humidity_sensor_cfg = {
-        .measured_value = 0,
-        .min_value = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE),
-        .max_value = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE),
-    };        
+    int16_t min_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE);
+    int16_t max_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE);
+    esp_zb_attribute_list_t *esp_zb_humidity_meas_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT);
+    esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &undefined_value);
+    esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_MIN_VALUE_ID, &min_humidity);
+    esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_MAX_VALUE_ID, &max_humidity);
+
     // Add humidity measurement cluster
-    ESP_ERROR_CHECK(
-        esp_zb_cluster_list_add_humidity_meas_cluster(
-            cluster_list, 
-            esp_zb_humidity_meas_cluster_create(&humidity_sensor_cfg), 
-            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE
-        )
-    );    
+    ESP_ERROR_CHECK(esp_zb_cluster_list_add_humidity_meas_cluster(cluster_list, esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     return cluster_list;
 }
 
@@ -364,7 +382,7 @@ static void esp_zb_task(void *pvParameters)
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
         .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 20,
+        .u.send_info.max_interval = 60,
         .u.send_info.def_min_interval = 1,
         .u.send_info.def_max_interval = 0,
         .u.send_info.delta.u16 = 100,
@@ -381,7 +399,7 @@ static void esp_zb_task(void *pvParameters)
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
         .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 20,
+        .u.send_info.max_interval = 60,
         .u.send_info.def_min_interval = 1,
         .u.send_info.def_max_interval = 0,
         .u.send_info.delta.u16 = 100,
@@ -445,20 +463,23 @@ static void zb_deep_sleep_init(void)
     ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(WAKE_UP_TIME_SEC * 1000000ULL));
     ESP_LOGI(TAG, "Set wakeup timer done");
 
-    const int gpio_wakeup_pin = 9;
-    const uint64_t gpio_wakeup_pin_mask = 1ULL << gpio_wakeup_pin;
-    /* The configuration mode depends on your hardware design.
-    Since the BOOT button is connected to a pull-up resistor, the wake-up mode is configured as LOW. */
-    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(gpio_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_LOW));
 
-    /* Also these two GPIO configurations are also depended on the hardware design.
-    The BOOT button is connected to the pull-up resistor, so enable the pull-up mode and disable the pull-down mode.
+    // // https://www.nologo.tech/product/esp32/esp32s3/esp32s3supermini/esp32S3SuperMini.html#%E5%B0%BA%E5%AF%B8%E5%9B%BE
+    // // ESP32H2 super mini board
+    // const int gpio_wakeup_pin = 0;
+    // const uint64_t gpio_wakeup_pin_mask = 1ULL << gpio_wakeup_pin;
+    // /* The configuration mode depends on your hardware design.
+    // Since the BOOT button is connected to a pull-up resistor, the wake-up mode is configured as LOW. */
+    // ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(gpio_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_LOW));
 
-    Notice: if these GPIO configurations do not match the hardware design, the deep sleep module will enable the GPIO hold
-    feature to hold the GPIO voltage when enter the sleep, which will ensure the board be waked up by GPIO. But it will cause
-    3~4 times power consumption increasing during sleep. */
-    ESP_ERROR_CHECK(gpio_pullup_en(gpio_wakeup_pin));
-    ESP_ERROR_CHECK(gpio_pulldown_dis(gpio_wakeup_pin));    
+    // /* Also these two GPIO configurations are also depended on the hardware design.
+    // The BOOT button is connected to the pull-up resistor, so enable the pull-up mode and disable the pull-down mode.
+
+    // Notice: if these GPIO configurations do not match the hardware design, the deep sleep module will enable the GPIO hold
+    // feature to hold the GPIO voltage when enter the sleep, which will ensure the board be waked up by GPIO. But it will cause
+    // 3~4 times power consumption increasing during sleep. */
+    // ESP_ERROR_CHECK(gpio_pullup_en(gpio_wakeup_pin));
+    // ESP_ERROR_CHECK(gpio_pulldown_dis(gpio_wakeup_pin));    
 }
 
 // Application main entry point

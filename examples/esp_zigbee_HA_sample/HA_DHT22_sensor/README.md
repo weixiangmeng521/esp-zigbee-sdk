@@ -36,6 +36,8 @@ idf.py -p /dev/tty.usbmodem1441401 monitor -b 115200
 idf.py -p /dev/tty.usbmodem5A360306451 monitor -b 115200
 idf.py -p /dev/tty.usbmodem144101 monitor -b 115200
 
+
+
 ### 通过PMOS管供电，GPIO10控制
 
 
