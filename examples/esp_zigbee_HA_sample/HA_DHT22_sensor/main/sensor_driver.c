@@ -53,10 +53,10 @@ static void temp_sensor_driver_value_update(void *arg)
 {   
     uint16_t temperature      = 0;
     uint16_t humidity         = 0;
-    int retry_index        = 0;
-    int retry_times_list[] = {300, 600, 1200, 2400, 4800, 9600};
-    int retry_count        = sizeof(retry_times_list) / sizeof(retry_times_list[0]);
-    int warn_up_time       = 1300;
+    int retry_index           = 0;
+    int retry_times_list[]    = {300, 600, 1200, 2400, 4800, 9600};
+    int retry_count           = sizeof(retry_times_list) / sizeof(retry_times_list[0]);
+    int warn_up_time          = 1300;
     while(1){
         gpio_set_level(POWER_GPIO, P_HIGHT);
 

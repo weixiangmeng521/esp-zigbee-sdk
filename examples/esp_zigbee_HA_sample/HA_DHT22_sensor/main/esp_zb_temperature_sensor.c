@@ -49,7 +49,8 @@ static RTC_DATA_ATTR float last_temperature = 0;
 static RTC_DATA_ATTR float last_humidity    = 0;
 // one shot timer
 static esp_timer_handle_t s_oneshot_timer;
-
+// generic device type
+uint8_t generic_device_type = 0xFF; 
 // wait report data handle
 EventGroupHandle_t report_event_group_handle = NULL;
 
@@ -322,11 +323,13 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
     esp_zb_attribute_list_t *basic_cluster = esp_zb_basic_cluster_create(&(sensor->basic_cfg));
     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, MANUFACTURER_NAME));
     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, MODEL_IDENTIFIER));
+    ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_PRODUCT_URL_ID, ESP_PRODUCT_URL));   
+    ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_GENERIC_DEVICE_TYPE_ID, &generic_device_type));    
+    ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_DATE_CODE_ID, ESP_DATE_CODE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_identify_cluster_create(&(sensor->identify_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_temperature_meas_cluster(cluster_list, esp_zb_temperature_meas_cluster_create(&(sensor->temp_meas_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-
     
     //  Add humidity measurement cluster
     uint16_t min_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE);
@@ -358,6 +361,12 @@ static esp_zb_ep_list_t *custom_temperature_sensor_ep_create(uint8_t endpoint_id
 }
 
 
+/**
+ * @brief zb_attribute_handler
+ * 
+ * @param message 
+ * @return esp_err_t 
+ */
 static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t *message)
 {
     esp_err_t ret = ESP_OK;
@@ -548,21 +557,44 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
  * @param pvParameters 
  */
 static void zigbee_main_task(void *pvParameters){
+    esp_zb_platform_config_t config = {
+        .radio_config = {
+            .radio_mode = ZB_RADIO_MODE_NATIVE,
+        },
+        .host_config = {
+            .host_connection_mode = ZB_HOST_CONNECTION_MODE_NONE,
+        },
+    };
+    ESP_ERROR_CHECK(esp_zb_platform_config(&config));
+
     /* Initialize Zigbee stack */
-    esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZED_CONFIG();
+    esp_zb_cfg_t zb_nwk_cfg = {
+        .esp_zb_role = ESP_ZB_DEVICE_TYPE_ED, // End device
+        .install_code_policy = false,
+        .nwk_cfg.zed_cfg = {
+            .ed_timeout = ED_AGING_TIMEOUT, // 64 minutes
+            .keep_alive = ED_KEEP_ALIVE,    // 3 seconds
+        },
+    };
+    esp_zb_sleep_enable(true);
     esp_zb_init(&zb_nwk_cfg);
 
     /* Create customized temperature sensor endpoint */
     esp_zb_temperature_sensor_cfg_t sensor_cfg = ESP_ZB_DEFAULT_TEMPERATURE_SENSOR_CONFIG();
     uint16_t last_s16_tmp = last_temperature == 0 ? ESP_ZB_ZCL_TEMP_MEASUREMENT_MEASURED_VALUE_DEFAULT : (uint16_t)(last_temperature * 100);
+
     /* Set (Min|Max|Real)MeasuredValure */
     sensor_cfg.temp_meas_cfg.measured_value = last_s16_tmp;
     sensor_cfg.temp_meas_cfg.min_value = zb_float_to_s16(ESP_TEMP_SENSOR_MIN_VALUE);
     sensor_cfg.temp_meas_cfg.max_value = zb_float_to_s16(ESP_TEMP_SENSOR_MAX_VALUE);
+    sensor_cfg.basic_cfg.power_source = 0x03;
+    sensor_cfg.basic_cfg.zcl_version = 0x0008;
+    
     esp_zb_ep_list_t *esp_zb_sensor_ep = custom_temperature_sensor_ep_create(HA_ESP_SENSOR_ENDPOINT, &sensor_cfg);
 
     /* Register the device */
     esp_zb_device_register(esp_zb_sensor_ep);
+    
 
     /* Config the reporting info  */
     esp_zb_zcl_reporting_info_t reporting_temp_info = {
@@ -575,7 +607,7 @@ static void zigbee_main_task(void *pvParameters){
         .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
         // .u.send_info.def_min_interval = 0,
         // .u.send_info.def_max_interval = 1,
-        // .u.send_info.delta.u16 = 0,
+        .u.send_info.delta.u16 = 100,
         .attr_id = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
@@ -592,7 +624,7 @@ static void zigbee_main_task(void *pvParameters){
         .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
         // .u.send_info.def_min_interval = 0,
         // .u.send_info.def_max_interval = 1,
-        // .u.send_info.delta.u16 = 0,
+        .u.send_info.delta.u16 = 500,
         .attr_id = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
@@ -612,7 +644,10 @@ static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
     tmp_temperature = temperature;
     tmp_humidity = humidity;
     // check should for update
-    if((temperature  / 10.0f) != last_temperature || (humidity / 10.0f) != last_humidity){
+    if (
+        fabsf((temperature  / 10.0f) - last_temperature) >= TEMP_DELTA ||
+        fabsf((humidity / 10.0f) - last_humidity) >= HUM_DELTA
+    ) {
         // going to start zigbee        
         xTaskCreate(zigbee_main_task, "zigbee_main_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
         xEventGroupSetBits(report_event_group_handle, SHALL_ENABLE_REPORT);
@@ -743,15 +778,9 @@ static esp_err_t esp_zb_power_save_init(void)
 
 // Application main entry point
 void app_main(void)
-{
-    esp_zb_platform_config_t config = {
-        .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
-        .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
-    };
-    
+{   
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_zb_power_save_init());
-    ESP_ERROR_CHECK(esp_zb_platform_config(&config));
     // create event group
     report_event_group_handle = xEventGroupCreate();
 

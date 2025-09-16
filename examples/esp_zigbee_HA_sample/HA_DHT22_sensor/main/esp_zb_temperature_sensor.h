@@ -22,13 +22,11 @@
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK    /* Zigbee primary channel mask use in the example */
 
 // DHT22 data pin
-#define DHT22_GPIO                      14
-
+#define DHT22_GPIO                      (14)
 // DHT22 power pin
-#define DHT22_POWER_GPIO                10
-
+#define DHT22_POWER_GPIO                (10)
 // Deep sleep second
-#define WAKE_UP_TIME_SEC                (30)
+#define WAKE_UP_TIME_SEC                (10)
 // Maximum time to force a device report
 #define MUST_SYNC_MINIMUM_TIME          UINT16_C(65535) // 1 day in seconds
 // time to send the device to deep sleep when Zigbee radio is on
@@ -58,6 +56,8 @@
  */
 #define MANUFACTURER_NAME               "\x09""ESPRESSIF"
 #define MODEL_IDENTIFIER                "\x07"CONFIG_IDF_TARGET
+#define ESP_PRODUCT_URL                 "\x2B""https://github.com/weixiangmeng521"
+#define ESP_DATE_CODE                   "\x08""20250916"
 
 #define ESP_ZB_ZED_CONFIG()                                         \
     {                                                               \
