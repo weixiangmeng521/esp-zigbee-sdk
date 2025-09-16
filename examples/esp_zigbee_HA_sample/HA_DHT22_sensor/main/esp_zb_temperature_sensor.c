@@ -47,15 +47,21 @@ static RTC_DATA_ATTR struct timeval s_sleep_enter_time;
 static RTC_DATA_ATTR float last_temperature = 0;
 // last measured humidity
 static RTC_DATA_ATTR float last_humidity    = 0;
-
 // one shot timer
 static esp_timer_handle_t s_oneshot_timer;
 
+// wait report data handle
+EventGroupHandle_t report_event_group_handle = NULL;
 
+
+// data from sensor
+static uint16_t tmp_temperature = 0;
+// data from sensor
+static uint16_t tmp_humidity    = 0;
 static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 
-// Zigbee 规范里常用的无效值
-#define ZB_ZCL_ATTR_INT16S_INVALID 0x8000
+// define function
+static void zigbee_main_task(void *pvParameters); 
 
 
 static uint16_t zb_float_to_s16(float temp)
@@ -84,12 +90,12 @@ static void zb_deep_sleep_start(void)
 }
 
 // upload temperature data.
-static void updata_attribute_for_temperature(uint16_t temperature){
+static bool updata_attribute_for_temperature(uint16_t temperature){
     float temp_f = temperature / 10.0f;
 
     if(fabs(temp_f - last_temperature) <= TEMP_DELTA) {
         ESP_LOGI(TAG, "It doesnt need to update temperature.");
-        return;
+        return false;
     }
     // upload to zigbee
     uint16_t temp_s16 = temperature * 10;
@@ -104,12 +110,42 @@ static void updata_attribute_for_temperature(uint16_t temperature){
     /* Check for error */
     if(state_tmp != ESP_ZB_ZCL_STATUS_SUCCESS){
         ESP_LOGE(TAG, "Failed to set temperature: 0x%x", state_tmp);        
-        return;
+        return false;
     }
     // update last memeory
 	last_temperature = temp_f;
-    ESP_LOGI(TAG, "Temperature has updated done: 0x%04X", temperature);
+    ESP_LOGI(TAG, "Temperature has updated done.");
+    return true;
 }
+
+
+/**
+ * @brief report attributes to radio
+ * TODO: depends on baits to report
+ */
+void zb_radio_send_values(uint8_t mapBits){
+    esp_zb_zcl_report_attr_cmd_t report_attr_cmd = {0};
+    report_attr_cmd.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
+    report_attr_cmd.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI;
+    report_attr_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_METERING;
+    report_attr_cmd.zcl_basic_cmd.src_endpoint = HA_ESP_SENSOR_ENDPOINT;
+
+    // report temperature
+    if((mapBits & TEMPERATURE_REPORT) != 0){
+        report_attr_cmd.attributeID = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID;
+        report_attr_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT;
+        ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+        ESP_LOGI(TAG, "Temperature reported");
+    }
+    // report humidity
+    if((mapBits & HUMIDITY_REPORT) != 0){
+        report_attr_cmd.attributeID = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID;
+        report_attr_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT;
+        ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+        ESP_LOGI(TAG, "Humidity reported");
+    }
+}
+
 
 
 /**
@@ -117,19 +153,13 @@ static void updata_attribute_for_temperature(uint16_t temperature){
  * 
  * @param humidity 
  */
-static void updata_attribute_for_humidity(uint16_t humidity){
+static bool updata_attribute_for_humidity(uint16_t humidity){
     float hum_f = humidity / 10.0f;
-
-    // 检查无效值
-    if (hum_f < 0.0f || hum_f > 100.0f) {
-        ESP_LOGE(TAG, "Invalid humidity: %.2f", hum_f);
-        return;
-    }
 
     // 判断是否需要更新
     if (fabs(hum_f - last_humidity) <= HUM_DELTA) {
         ESP_LOGI(TAG, "It doesnt need to update humidity.");
-        return;
+        return false;
     }    
 
     uint16_t hum_s16 = humidity * 10;
@@ -144,27 +174,15 @@ static void updata_attribute_for_humidity(uint16_t humidity){
     /* Check for error */
     if(state_hum != ESP_ZB_ZCL_STATUS_SUCCESS){
         ESP_LOGE(TAG, "Failed to set humidity: 0x%x", state_hum);
-        return;
+        return false;
     }
     // update last memeory
     last_humidity = hum_f;
-    ESP_LOGI(TAG, "Humidity has updated done: 0x%04X", humidity);
+    ESP_LOGI(TAG, "Humidity has updated done.");
+    return true;
 }
 
-// 获取sensor的数据
-static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
-{
-    ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", (temperature / 10.0f), (humidity / 10.0f));
 
-    /* Update temperature sensor measured value */
-    esp_zb_lock_acquire(portMAX_DELAY);
-    updata_attribute_for_temperature(temperature);
-    updata_attribute_for_humidity(humidity);
-    esp_zb_lock_release();
-
-    // going to sleep  
-    zb_deep_sleep_start();
-}
 
 // if read data fail, then callback
 static void esp_app_temp_sensor_fallback_handler(){
@@ -181,26 +199,56 @@ static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
                         TAG, "Failed to start Zigbee bdb commissioning");
 }
  
-// Initialize the temperature sensor driver
-static esp_err_t deferred_driver_init(void)
-{
-    static bool is_inited = false;
-    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(ESP_TEMP_SENSOR_MIN_VALUE, ESP_TEMP_SENSOR_MAX_VALUE);
-    if (!is_inited) {
-        ESP_RETURN_ON_ERROR(
-            temp_sensor_driver_init(
-                &temp_sensor_config, 
-                DHT22_GPIO, 
-                DHT22_POWER_GPIO, 
-                esp_app_temp_sensor_handler,
-                esp_app_temp_sensor_fallback_handler
-            ),
-            TAG, "Failed to initialize temperature sensor");
 
-        is_inited = true;
+/**
+ * @brief wait report data task
+ * 
+ * @param arg 
+ */
+void report_data_task(void *arg){
+    while (true){
+        ESP_LOGI(TAG, "Waiting for sensor data...");
+        xEventGroupWaitBits(
+            report_event_group_handle,
+            SHALL_ENABLE_REPORT,
+            pdTRUE,
+            pdFALSE,
+            pdMS_TO_TICKS(250));
+
+        int8_t map_bits = 0;
+        ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", (tmp_temperature / 10.0f), (tmp_humidity / 10.0f));
+        /* Update temperature sensor measured value */
+        esp_zb_lock_acquire(portMAX_DELAY);
+        bool res1 = updata_attribute_for_temperature(tmp_temperature);
+        if(res1) map_bits |= HUMIDITY_REPORT;
+        bool res2 = updata_attribute_for_humidity(tmp_humidity);
+        if(res2) map_bits |= TEMPERATURE_REPORT;
+        // send values
+        zb_radio_send_values(map_bits);
+        esp_zb_lock_release();
+        // going to sleep
+        zb_deep_sleep_start();
+        // delete task
+        vTaskDelete(NULL);
     }
-    return is_inited ? ESP_OK : ESP_FAIL;
 }
+
+
+/**
+ * @brief Initialize the temperature sensor driver
+ * 
+ * @return esp_err_t 
+ */
+static esp_err_t init_report_task(void)
+{
+    BaseType_t ret = xTaskCreate(report_data_task, "report_data_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
+    if (ret == pdPASS) {
+        return ESP_OK;
+    } else {
+        return ESP_FAIL;
+    }
+}
+
 
 // Handle Zigbee stack signals
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
@@ -208,7 +256,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     uint32_t *p_sg_p     = signal_struct->p_app_signal;
     esp_err_t err_status = signal_struct->esp_err_status;
     esp_zb_app_signal_type_t sig_type = *p_sg_p;
-    esp_zb_zdo_signal_leave_params_t *leave_params = NULL;
+    // esp_zb_zdo_signal_leave_params_t *leave_params = NULL;
 
     switch (sig_type) {
     case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
@@ -218,7 +266,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err_status == ESP_OK) {
-            ESP_LOGI(TAG, "Deferred driver initialization %s", deferred_driver_init() ? "failed" : "successful");
+            ESP_LOGI(TAG, "Deferred driver initialization %s", init_report_task() ? "failed" : "successful");
             ESP_LOGI(TAG, "Device started up in%s factory-reset mode", esp_zb_bdb_is_factory_new() ? "" : " non");
             if (esp_zb_bdb_is_factory_new()) {
                 ESP_LOGI(TAG, "Start network steering");
@@ -247,15 +295,18 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         }
         break;    
     case ESP_ZB_ZDO_SIGNAL_LEAVE:
-        leave_params = (esp_zb_zdo_signal_leave_params_t *)esp_zb_app_signal_get_params(p_sg_p);
-        if (leave_params->leave_type == ESP_ZB_NWK_LEAVE_TYPE_RESET) {
-            ESP_LOGI(TAG, "Reset device");
-            esp_zb_factory_reset();
+        esp_zb_zdo_signal_leave_params_t *leave_params = (esp_zb_zdo_signal_leave_params_t *)esp_zb_app_signal_get_params(p_sg_p);
+        if (leave_params && leave_params->leave_type == ESP_ZB_NWK_LEAVE_TYPE_RESET) {
+            esp_zb_nvram_erase_at_start(true);                                          // erase previous network information.
+            esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING); // steering a new network.
         }
         break;
     case ESP_ZB_COMMON_SIGNAL_CAN_SLEEP:
         ESP_LOGI(TAG, "Can sleep");   
-        break;             
+        break;  
+    case ESP_ZB_ZDO_SIGNAL_PRODUCTION_CONFIG_READY:
+        esp_zb_set_node_descriptor_manufacturer_code(ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC);
+        break;                   
     default:
         ESP_LOGI(TAG, "ZDO signal: %s (0x%x), status: %s", esp_zb_zdo_signal_to_string(sig_type), sig_type,
                  esp_err_to_name(err_status));
@@ -292,20 +343,6 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
 }
 
 
-// // Create a custom temperature sensor endpoint
-// static esp_zb_cluster_list_t *custom_humidity_sensor_clusters_create(esp_zb_temperature_sensor_cfg_t *sensor)
-// {
-//     esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
-//     esp_zb_attribute_list_t *basic_cluster = esp_zb_basic_cluster_create(&(sensor->basic_cfg));
-//     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, MANUFACTURER_NAME));
-//     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, MODEL_IDENTIFIER));
-//     ESP_ERROR_CHECK(esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-//     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_identify_cluster_create(&(sensor->identify_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-//     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
-//     return cluster_list;
-// }
-
-
 //  Create a custom temperature sensor endpoint
 static esp_zb_ep_list_t *custom_temperature_sensor_ep_create(uint8_t endpoint_id, esp_zb_temperature_sensor_cfg_t *temperature_sensor)
 {
@@ -319,21 +356,6 @@ static esp_zb_ep_list_t *custom_temperature_sensor_ep_create(uint8_t endpoint_id
     esp_zb_ep_list_add_ep(ep_list, custom_temperature_sensor_clusters_create(temperature_sensor), endpoint_config);
     return ep_list;
 }
-
-
-// //  Create a custom humidity sensor endpoint
-// static esp_zb_ep_list_t *custom_humidity_sensor_ep_create(uint8_t endpoint_id)
-// {
-//     esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
-//     esp_zb_endpoint_config_t endpoint_config = {
-//         .endpoint = endpoint_id,
-//         .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-//         .app_device_id = ESP_ZB_HA_TEMPERATURE_SENSOR_DEVICE_ID,
-//         .app_device_version = 0
-//     };
-//     esp_zb_ep_list_add_ep(ep_list, custom_humidity_sensor_clusters_create(humidity_sensor));
-//     return ep_list;
-// }
 
 
 static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t *message)
@@ -520,10 +542,12 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
 }
 
 
-
-// Zigbee stack main task
-static void esp_zb_task(void *pvParameters)
-{
+/**
+ * @brief zigbee main task
+ * 
+ * @param pvParameters 
+ */
+static void zigbee_main_task(void *pvParameters){
     /* Initialize Zigbee stack */
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZED_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
@@ -547,18 +571,15 @@ static void esp_zb_task(void *pvParameters)
         .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval = 0,
-        .u.send_info.max_interval = 0,
-        // .u.send_info.def_min_interval = 1,
-        // .u.send_info.def_max_interval = 300,
-        .u.send_info.delta.u16 = 0,
+        .u.send_info.min_interval = TIME_TO_SLEEP_ZIGBEE_ON / 2000,
+        .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
+        // .u.send_info.def_min_interval = 0,
+        // .u.send_info.def_max_interval = 1,
+        // .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
-    esp_err_t temp_report_err = esp_zb_zcl_update_reporting_info(&reporting_temp_info);
-    if(temp_report_err != ESP_OK){
-        ESP_LOGE(TAG, "ZCL temperature report fail: %s", esp_err_to_name(temp_report_err));
-    }
+    ESP_ERROR_CHECK(esp_zb_zcl_update_reporting_info(&reporting_temp_info));
 
     /* Config the reporting info  */
     esp_zb_zcl_reporting_info_t reporting_hum_info = {
@@ -567,25 +588,65 @@ static void esp_zb_task(void *pvParameters)
         .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval = 0,
-        .u.send_info.max_interval = 0,
-        // .u.send_info.def_min_interval = 1,
-        // .u.send_info.def_max_interval = 300,
-        .u.send_info.delta.u16 = 0,
+        .u.send_info.min_interval = TIME_TO_SLEEP_ZIGBEE_ON / 2000,
+        .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
+        // .u.send_info.def_min_interval = 0,
+        // .u.send_info.def_max_interval = 1,
+        // .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
-    esp_err_t humi_report_err = esp_zb_zcl_update_reporting_info(&reporting_hum_info);
-    if(humi_report_err != ESP_OK){
-        ESP_LOGE(TAG, "ZCL humidity report fail: %s", esp_err_to_name(humi_report_err));
-    }
+    ESP_ERROR_CHECK(esp_zb_zcl_update_reporting_info(&reporting_hum_info));
 
-    // ------------------------------ Register Device ------------------------------
+    // ---------------- Register Device ----------------
     esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_stack_main_loop();
 }
+
+
+// 获取sensor的数据
+static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
+{
+    tmp_temperature = temperature;
+    tmp_humidity = humidity;
+    // check should for update
+    if((temperature  / 10.0f) != last_temperature || (humidity / 10.0f) != last_humidity){
+        // going to start zigbee        
+        xTaskCreate(zigbee_main_task, "zigbee_main_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
+        xEventGroupSetBits(report_event_group_handle, SHALL_ENABLE_REPORT);
+        return;
+    }
+    // going to sleep
+    ESP_LOGI(TAG, "Dont need to update. going to sleep...");
+    ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, 1));
+}
+
+
+/**
+ * @brief init dht22 sensor
+ * 
+ */
+static void init_dht22_sensor(void)
+{   
+    temperature_sensor_config_t temp_sensor_config =
+        TEMPERATURE_SENSOR_CONFIG_DEFAULT(ESP_TEMP_SENSOR_MIN_VALUE, ESP_TEMP_SENSOR_MAX_VALUE);
+
+    esp_err_t ret = temp_sensor_driver_init(
+        &temp_sensor_config,
+        DHT22_GPIO,
+        DHT22_POWER_GPIO,
+        esp_app_temp_sensor_handler,
+        esp_app_temp_sensor_fallback_handler
+    );
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize temperature sensor: %s", esp_err_to_name(ret));
+        return;
+    }
+}
+
 
 
 
@@ -654,6 +715,32 @@ static void zb_deep_sleep_init(void)
     // ESP_ERROR_CHECK(gpio_pulldown_dis(gpio_wakeup_pin));    
 }
 
+
+static esp_err_t esp_zb_power_save_init(void)
+{
+    esp_err_t rc = ESP_OK;
+#ifdef CONFIG_PM_ENABLE
+    int cur_cpu_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = cur_cpu_freq_mhz,
+        .min_freq_mhz = cur_cpu_freq_mhz,
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+    // TODO: explore why this causes a problem
+    // When the device enters deep sleep after a 3s period
+    // caused by the counter going up one tick
+    // the device wakes up on RTC automatically and this
+    // is not desired as it will turn on Zigbee radio
+    // as it is defined in code
+
+    // .light_sleep_enable = true
+#endif
+    };
+    rc = esp_pm_configure(&pm_config);
+#endif
+    return rc;
+}
+
+
 // Application main entry point
 void app_main(void)
 {
@@ -661,12 +748,16 @@ void app_main(void)
         .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
         .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
     };
+    
     ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_zb_power_save_init());
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
+    // create event group
+    report_event_group_handle = xEventGroupCreate();
 
     // set deep sleep
     zb_deep_sleep_init();
 
     /* Start Zigbee stack task */
-    xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
+    init_dht22_sensor();
 }

@@ -22,13 +22,28 @@
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK    /* Zigbee primary channel mask use in the example */
 
 // DHT22 data pin
-#define DHT22_GPIO 14
+#define DHT22_GPIO                      14
 
 // DHT22 power pin
-#define DHT22_POWER_GPIO 10
+#define DHT22_POWER_GPIO                10
 
 // Deep sleep second
-#define WAKE_UP_TIME_SEC                (10)
+#define WAKE_UP_TIME_SEC                (30)
+// Maximum time to force a device report
+#define MUST_SYNC_MINIMUM_TIME          UINT16_C(65535) // 1 day in seconds
+// time to send the device to deep sleep when Zigbee radio is on
+#define TIME_TO_SLEEP_ZIGBEE_ON         UINT32_C(30 * 1000) // milliseconds
+// time to send the device to deep sleep when Zigbee radio is off
+#define TIME_TO_SLEEP_ZIGBEE_OFF        UINT32_C(500) // milliseconds
+
+
+
+#define HUMIDITY_REPORT                 (1 << 0)
+#define TEMPERATURE_REPORT              (1 << 1)
+
+// should using zigbee to push data
+#define SHALL_ENABLE_REPORT             (1 << 0)
+
 
 // Temperature
 #define ESP_TEMP_SENSOR_MIN_VALUE       (-40)   /* Local sensor min measured value (degree Celsius) */
