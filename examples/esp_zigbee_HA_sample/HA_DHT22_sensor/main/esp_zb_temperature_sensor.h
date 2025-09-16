@@ -27,6 +27,8 @@
 #define DHT22_POWER_GPIO                (10)
 // Deep sleep second
 #define WAKE_UP_TIME_SEC                (10)
+// Before sleep second time
+#define BEFORE_DEEP_SLEEP_TIME_SEC      (5)
 // Maximum time to force a device report
 #define MUST_SYNC_MINIMUM_TIME          UINT16_C(65535) // 1 day in seconds
 // time to send the device to deep sleep when Zigbee radio is on
@@ -39,9 +41,8 @@
 #define HUMIDITY_REPORT                 (1 << 0)
 #define TEMPERATURE_REPORT              (1 << 1)
 
-// should using zigbee to push data
+// Should using zigbee to push data
 #define SHALL_ENABLE_REPORT             (1 << 0)
-
 
 // Temperature
 #define ESP_TEMP_SENSOR_MIN_VALUE       (-40)   /* Local sensor min measured value (degree Celsius) */

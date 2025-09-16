@@ -85,10 +85,11 @@ static void s_oneshot_timer_callback(void* arg)
 static void zb_deep_sleep_start(void)
 {
     /* Start the one-shot timer */
-    const float before_deep_sleep_time_sec = 10;
+    const float before_deep_sleep_time_sec = (float)BEFORE_DEEP_SLEEP_TIME_SEC;
     ESP_LOGI(TAG, "Start one-shot timer for %.2fs to enter the deep sleep", before_deep_sleep_time_sec);
     ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, before_deep_sleep_time_sec * 1000000));
 }
+
 
 // upload temperature data.
 static bool updata_attribute_for_temperature(uint16_t temperature){
