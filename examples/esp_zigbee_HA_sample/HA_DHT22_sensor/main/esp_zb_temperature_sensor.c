@@ -54,7 +54,6 @@ uint8_t generic_device_type = 0xFF;
 // wait report data handle
 EventGroupHandle_t report_event_group_handle = NULL;
 
-
 // data from sensor
 static uint16_t tmp_temperature = 0;
 // data from sensor
@@ -63,6 +62,15 @@ static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 
 // define function
 static void zigbee_main_task(void *pvParameters); 
+
+
+/**
+ * @brief 
+ * TODO: 重置按钮，重置上次网络请求信息
+ * 
+ */
+
+
 
 
 static uint16_t zb_float_to_s16(float temp)
@@ -82,14 +90,12 @@ static void s_oneshot_timer_callback(void* arg)
 
 
 // 开始进入睡眠
-static void zb_deep_sleep_start(void)
+static void zb_deep_sleep_start(float before_deep_sleep_time_sec)
 {
-    /* Start the one-shot timer */
-    const float before_deep_sleep_time_sec = (float)BEFORE_DEEP_SLEEP_TIME_SEC;
     ESP_LOGI(TAG, "Start one-shot timer for %.2fs to enter the deep sleep", before_deep_sleep_time_sec);
-    ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, before_deep_sleep_time_sec * 1000000));
+    uint64_t sleep_time_us = (uint64_t)(before_deep_sleep_time_sec * 1000000ULL);
+    ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, sleep_time_us));
 }
-
 
 // upload temperature data.
 static bool updata_attribute_for_temperature(uint16_t temperature){
@@ -208,6 +214,9 @@ static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
  * @param arg 
  */
 void report_data_task(void *arg){
+    // is reboot just now
+    bool is_just_reboot = (esp_reset_reason() == ESP_RST_POWERON);
+
     while (true){
         ESP_LOGI(TAG, "Waiting for sensor data...");
         xEventGroupWaitBits(
@@ -229,7 +238,13 @@ void report_data_task(void *arg){
         zb_radio_send_values(map_bits);
         esp_zb_lock_release();
         // going to sleep
-        zb_deep_sleep_start();
+        if(is_just_reboot) {
+            ESP_LOGI(TAG, "Device restart just now.");
+            zb_deep_sleep_start(13.0f);
+        }
+        if(!is_just_reboot) {
+            zb_deep_sleep_start((float)BEFORE_DEEP_SLEEP_TIME_SEC);
+        }
         // delete task
         vTaskDelete(NULL);
     }
@@ -279,8 +294,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         } else {
             ESP_LOGW(TAG, "%s failed with status: %s, retrying", esp_zb_zdo_signal_to_string(sig_type),
                      esp_err_to_name(err_status));
-            esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
-                                   ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
+            esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb, ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
         }
         break;
     case ESP_ZB_BDB_SIGNAL_STEERING:
@@ -304,7 +318,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         }
         break;
     case ESP_ZB_COMMON_SIGNAL_CAN_SLEEP:
-        ESP_LOGI(TAG, "Can sleep");   
+        // ESP_LOGI(TAG, "Can sleep");
         break;  
     case ESP_ZB_ZDO_SIGNAL_PRODUCTION_CONFIG_READY:
         esp_zb_set_node_descriptor_manufacturer_code(ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC);
@@ -608,7 +622,7 @@ static void zigbee_main_task(void *pvParameters){
         .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
         // .u.send_info.def_min_interval = 0,
         // .u.send_info.def_max_interval = 1,
-        .u.send_info.delta.u16 = 100,
+        .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
@@ -625,7 +639,7 @@ static void zigbee_main_task(void *pvParameters){
         .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
         // .u.send_info.def_min_interval = 0,
         // .u.send_info.def_max_interval = 1,
-        .u.send_info.delta.u16 = 500,
+        .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
