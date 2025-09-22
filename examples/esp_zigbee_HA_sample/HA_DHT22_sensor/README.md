@@ -22,7 +22,9 @@ idf.py fullclean
 idf.py build
 idf.py -p /dev/tty.usbmodem1441401 flash -b 115200
 
-idf.py -p /dev/tty.usbmodem144101 flash -b 115200
+idf.py -p /dev/tty.usbmodem144401 flash -b 115200
+
+
 
 idf.py menuconfig
 idf.py fullclean
@@ -36,6 +38,8 @@ ls /dev/tty.*
 idf.py -p /dev/tty.usbmodem1441401 monitor -b 115200
 idf.py -p /dev/tty.usbmodem5A360306451 monitor -b 115200
 idf.py -p /dev/tty.usbmodem144101 monitor -b 115200
+idf.py -p /dev/tty.usbmodem144401 monitor -b 115200
+
 
 ### 抹除数据
 idf.py -p  /dev/tty.usbmodem1441401  erase-flash

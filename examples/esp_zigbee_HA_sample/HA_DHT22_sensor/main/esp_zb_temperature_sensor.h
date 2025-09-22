@@ -36,7 +36,12 @@
 // time to send the device to deep sleep when Zigbee radio is off
 #define TIME_TO_SLEEP_ZIGBEE_OFF        UINT32_C(500) // milliseconds
 
-
+// upload only when the temperature changes by more than 0.5°C
+#define TEMP_DELTA                      0.6f     
+// Humidity change exceeds 1%RH before uploading
+#define HUM_DELTA                       6.0f     
+// max should report time second 1h
+#define MAX_SHOULD_REPROT_TIME_SEC      (3600)              
 
 #define HUMIDITY_REPORT                 (1 << 0)
 #define TEMPERATURE_REPORT              (1 << 1)

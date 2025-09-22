@@ -37,16 +37,16 @@
 #error Define ZB_ED_ROLE in idf.py menuconfig to compile sensor (End Device) source code.
 #endif
 
-// upload only when the temperature changes by more than 0.5°C
-#define TEMP_DELTA 0.5f     
-// Humidity change exceeds 1%RH before uploading
-#define HUM_DELTA  1.0f     
 // last sleep enter time
 static RTC_DATA_ATTR struct timeval s_sleep_enter_time;
 // last measured temperature
 static RTC_DATA_ATTR float last_temperature = 0;
 // last measured humidity
 static RTC_DATA_ATTR float last_humidity    = 0;
+// last measured time
+static RTC_DATA_ATTR struct timeval s_last_reported_time;
+
+
 // one shot timer
 static esp_timer_handle_t s_oneshot_timer;
 // generic device type
@@ -245,6 +245,7 @@ void report_data_task(void *arg){
         if(!is_just_reboot) {
             zb_deep_sleep_start((float)BEFORE_DEEP_SLEEP_TIME_SEC);
         }
+        gettimeofday(&s_last_reported_time, NULL);
         // delete task
         vTaskDelete(NULL);
     }
@@ -656,18 +657,36 @@ static void zigbee_main_task(void *pvParameters){
 // 获取sensor的数据
 static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
 {
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    ESP_LOGI(TAG, "Current time: %ld s, %ld us", now.tv_sec, now.tv_usec);    
+    // if wake up from reset
+    bool is_just_reboot = (esp_reset_reason() == ESP_RST_POWERON);
+    if(is_just_reboot){
+        // going to start zigbee        
+        xTaskCreate(zigbee_main_task, "zigbee_main_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
+        xEventGroupSetBits(report_event_group_handle, SHALL_ENABLE_REPORT);
+        return;
+    }
+
+    // diff
+    time_t diff = now.tv_sec - s_last_reported_time.tv_sec;
+    // current temperature and humidit
     tmp_temperature = temperature;
     tmp_humidity = humidity;
+
     // check should for update
     if (
         fabsf((temperature  / 10.0f) - last_temperature) >= TEMP_DELTA ||
-        fabsf((humidity / 10.0f) - last_humidity) >= HUM_DELTA
+        fabsf((humidity / 10.0f) - last_humidity) >= HUM_DELTA || 
+        diff >= (int)MAX_SHOULD_REPROT_TIME_SEC
     ) {
         // going to start zigbee        
         xTaskCreate(zigbee_main_task, "zigbee_main_task", 4096, NULL, tskIDLE_PRIORITY, NULL);
         xEventGroupSetBits(report_event_group_handle, SHALL_ENABLE_REPORT);
         return;
     }
+
     // going to sleep
     ESP_LOGI(TAG, "Dont need to update. going to sleep...");
     ESP_ERROR_CHECK(esp_timer_start_once(s_oneshot_timer, 1));
