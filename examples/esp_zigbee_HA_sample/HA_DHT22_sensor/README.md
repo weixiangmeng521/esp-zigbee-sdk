@@ -20,8 +20,6 @@ idf.py set-target esp32h2
 rm -rf build 
 idf.py fullclean
 idf.py build
-idf.py -p /dev/tty.usbmodem1441401 flash -b 115200
-
 idf.py -p /dev/tty.usbmodem144401 flash -b 115200
 
 
@@ -35,9 +33,6 @@ idf.py build
 ls /dev/tty.*
 
 ### monitor
-idf.py -p /dev/tty.usbmodem1441401 monitor -b 115200
-idf.py -p /dev/tty.usbmodem5A360306451 monitor -b 115200
-idf.py -p /dev/tty.usbmodem144101 monitor -b 115200
 idf.py -p /dev/tty.usbmodem144401 monitor -b 115200
 
 

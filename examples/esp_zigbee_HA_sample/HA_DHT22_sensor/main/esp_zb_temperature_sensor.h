@@ -39,7 +39,7 @@
 // upload only when the temperature changes by more than 0.5°C
 #define TEMP_DELTA                      0.6f     
 // Humidity change exceeds 1%RH before uploading
-#define HUM_DELTA                       6.0f     
+#define HUM_DELTA                       1.0f     
 // max should report time second 1h
 #define MAX_SHOULD_REPROT_TIME_SEC      (3600)              
 

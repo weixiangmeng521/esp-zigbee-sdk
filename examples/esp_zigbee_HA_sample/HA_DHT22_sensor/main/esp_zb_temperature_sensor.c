@@ -101,10 +101,11 @@ static void zb_deep_sleep_start(float before_deep_sleep_time_sec)
 static bool updata_attribute_for_temperature(uint16_t temperature){
     float temp_f = temperature / 10.0f;
 
-    if(fabs(temp_f - last_temperature) <= TEMP_DELTA) {
-        ESP_LOGI(TAG, "It doesnt need to update temperature.");
-        return false;
-    }
+    // if(fabs(temp_f - last_temperature) <= TEMP_DELTA) {
+    //     ESP_LOGI(TAG, "It doesnt need to update temperature.");
+    //     return false;
+    // }
+
     // upload to zigbee
     uint16_t temp_s16 = temperature * 10;
     esp_zb_zcl_status_t state_tmp = esp_zb_zcl_set_attribute_val(
@@ -164,11 +165,11 @@ void zb_radio_send_values(uint8_t mapBits){
 static bool updata_attribute_for_humidity(uint16_t humidity){
     float hum_f = humidity / 10.0f;
 
-    // 判断是否需要更新
-    if (fabs(hum_f - last_humidity) <= HUM_DELTA) {
-        ESP_LOGI(TAG, "It doesnt need to update humidity.");
-        return false;
-    }    
+    // // 判断是否需要更新
+    // if (fabs(hum_f - last_humidity) <= HUM_DELTA) {
+    //     ESP_LOGI(TAG, "It doesnt need to update humidity.");
+    //     return false;
+    // }    
 
     uint16_t hum_s16 = humidity * 10;
     esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
