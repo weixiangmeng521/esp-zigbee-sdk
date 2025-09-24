@@ -25,8 +25,6 @@
 #define DHT22_GPIO                      (14)
 // DHT22 power pin
 #define DHT22_POWER_GPIO                (10)
-// Deep sleep second
-#define WAKE_UP_TIME_SEC                (10)
 // Before sleep second time
 #define BEFORE_DEEP_SLEEP_TIME_SEC      (5)
 // Maximum time to force a device report
@@ -39,9 +37,12 @@
 // upload only when the temperature changes by more than 0.5°C
 #define TEMP_DELTA                      0.6f     
 // Humidity change exceeds 1%RH before uploading
-#define HUM_DELTA                       1.0f     
-// max should report time second 1h
+#define HUM_DELTA                       6.0f     
+// should report max time second 1h
 #define MAX_SHOULD_REPROT_TIME_SEC      (3600)              
+// Deep sleep second
+#define WAKE_UP_TIME_SEC                (30)
+
 
 #define HUMIDITY_REPORT                 (1 << 0)
 #define TEMPERATURE_REPORT              (1 << 1)
