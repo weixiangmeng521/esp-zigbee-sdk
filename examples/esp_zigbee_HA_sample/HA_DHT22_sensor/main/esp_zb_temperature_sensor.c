@@ -27,6 +27,9 @@
 #include "driver/rtc_io.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "hal/ieee802154_ll.h"
+#include "zcl/esp_zigbee_zcl_power_config.h"
+
 
 #ifdef CONFIG_PM_ENABLE
 #include "esp_pm.h"
@@ -46,7 +49,6 @@ static RTC_DATA_ATTR float last_humidity    = 0;
 // last measured time
 static RTC_DATA_ATTR struct timeval s_last_reported_time;
 
-
 // one shot timer
 static esp_timer_handle_t s_oneshot_timer;
 // generic device type
@@ -59,6 +61,20 @@ static uint16_t tmp_temperature = 0;
 // data from sensor
 static uint16_t tmp_humidity    = 0;
 static const char *TAG = "ESP_ZB_TEMP_SENSOR";
+
+
+// value for the ESP_ZB_ZCL_ATTR_IDENTIFY_IDENTIFY_TIME_ID attribute
+uint16_t identify_time = 0;
+uint8_t battery_alarm_mask = 0x03;
+uint8_t battery_voltage_rated = 74;
+uint8_t battery_quantity = 2;
+
+uint8_t battery_voltage = 0;
+uint8_t battery_percentage = 0;
+uint32_t battery_alarm_state = 0;
+uint8_t battery_voltage_min = 70;
+uint8_t battery_voltage_th1 = 72;
+
 
 // define function
 static void zigbee_main_task(void *pvParameters); 
@@ -333,6 +349,59 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 }
 
 
+/**
+ * @brief power config cluster and add attributes
+ * 
+ * @param power_cfg 
+ * @return esp_zb_attribute_list_t* 
+ */
+static esp_zb_attribute_list_t *power_config_cluster_create_and_add_attrs(){
+    /* power cluster */
+    esp_zb_power_config_cluster_cfg_t power_cfg = {
+        .main_voltage = 74,
+        .main_freq = 0,
+        .main_alarm_mask = 0x03,
+        .main_voltage_min = 70,
+        .main_voltage_max = 84,
+        .main_voltage_dwell = MUST_SYNC_MINIMUM_TIME
+    };
+    esp_zb_attribute_list_t *esp_zb_power_cluster = esp_zb_power_config_cluster_create(&power_cfg);
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+        &battery_voltage));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
+        &battery_percentage));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_ALARM_STATE_ID,
+        &battery_alarm_state));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_ALARM_MASK_ID,
+        &battery_alarm_mask));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_MIN_THRESHOLD_ID,
+        &battery_voltage_min));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_THRESHOLD1_ID,
+        &battery_voltage_th1));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_RATED_VOLTAGE_ID,
+        &battery_voltage_rated));
+
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(esp_zb_power_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_QUANTITY_ID,
+        &battery_quantity)); 
+    return esp_zb_power_cluster;
+}
+
+
+
 // Create a custom temperature sensor endpoint
 static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_temperature_sensor_cfg_t *sensor)
 {
@@ -353,12 +422,15 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
     uint16_t max_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE);
     uint16_t last_s16_hum = last_humidity == 0 ? ESP_ZB_ZCL_REL_HUMIDITY_MEASUREMENT_MEASURED_VALUE_DEFAULT : (uint16_t)(last_humidity * 100);
     esp_zb_attribute_list_t *esp_zb_humidity_meas_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT);
+    esp_zb_attribute_list_t *esp_zb_power_cluster  = power_config_cluster_create_and_add_attrs();
     esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &last_s16_hum);
     esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_MIN_VALUE_ID, &min_humidity);
     esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_MAX_VALUE_ID, &max_humidity);
 
     // Add humidity measurement cluster
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_humidity_meas_cluster(cluster_list, esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    // Add power measurement cluster
+    ESP_ERROR_CHECK(esp_zb_cluster_list_add_power_config_cluster(cluster_list, esp_zb_power_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     return cluster_list;
 }
 
@@ -647,10 +719,35 @@ static void zigbee_main_task(void *pvParameters){
     };
     ESP_ERROR_CHECK(esp_zb_zcl_update_reporting_info(&reporting_hum_info));
 
+    // battery voltage
+    esp_zb_zcl_attr_location_info_t  percentage_location_info = {
+        .attr_id = ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
+        .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .endpoint_id = HA_ESP_SENSOR_ENDPOINT,
+        .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC
+    };
+    ESP_ERROR_CHECK(esp_zb_zcl_start_attr_reporting(percentage_location_info));
+
+    // battery alarm state
+    esp_zb_zcl_attr_location_info_t  battery_alarm_state_location_info = {
+        .attr_id = ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_ALARM_STATE_ID,
+        .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .endpoint_id = HA_ESP_SENSOR_ENDPOINT,
+        .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC
+    };
+    ESP_ERROR_CHECK(esp_zb_zcl_start_attr_reporting(battery_alarm_state_location_info));
+
+
+
     // ---------------- Register Device ----------------
+    esp_zb_set_tx_power(IEEE802154_TXPOWER_VALUE_MIN);
     esp_zb_core_action_handler_register(zb_action_handler);
-    esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
+    ESP_ERROR_CHECK(esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK));
+    ESP_ERROR_CHECK(esp_zb_set_secondary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK));
     ESP_ERROR_CHECK(esp_zb_start(false));
+    ESP_LOGI(TAG, "Starting Zigbee Main Loop");
     esp_zb_stack_main_loop();
 }
 

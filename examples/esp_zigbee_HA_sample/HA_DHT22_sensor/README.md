@@ -20,7 +20,7 @@ idf.py set-target esp32h2
 rm -rf build 
 idf.py fullclean
 idf.py build
-idf.py -p /dev/tty.usbmodem144401 flash -b 115200
+idf.py -p /dev/tty.usbmodem144201 flash -b 115200
 
 
 
@@ -33,11 +33,11 @@ idf.py build
 ls /dev/tty.*
 
 ### monitor
-idf.py -p /dev/tty.usbmodem144401 monitor -b 115200
+idf.py -p /dev/tty.usbmodem144201 monitor -b 115200
 
 
 ### 抹除数据
-idf.py -p  /dev/tty.usbmodem1441401  erase-flash
+idf.py -p  /dev/tty.usbmodem144401  erase-flash
 
 
 ### 通过PMOS管供电，GPIO10控制

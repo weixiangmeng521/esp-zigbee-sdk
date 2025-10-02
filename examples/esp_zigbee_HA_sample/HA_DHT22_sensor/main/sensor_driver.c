@@ -75,7 +75,7 @@ static void temp_sensor_driver_value_update(void *arg)
         
         // if read success and callback function is set, 
         // call it
-        if (res == 1 && func_ptr) {
+        if (res == 1 && func_ptr && temperature != 0 && humidity != 0) {
             gpio_set_level(POWER_GPIO, P_LOW);
             func_ptr(temperature, humidity);
             if(xHandle != NULL){
