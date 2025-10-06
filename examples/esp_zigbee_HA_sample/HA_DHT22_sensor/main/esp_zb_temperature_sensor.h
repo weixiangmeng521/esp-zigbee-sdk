@@ -39,13 +39,14 @@
 // Humidity change exceeds 1%RH before uploading
 #define HUM_DELTA                       6.0f     
 // should report max time second 1h
-#define MAX_SHOULD_REPROT_TIME_SEC      (3600)              
-// Deep sleep second
+#define MAX_SHOULD_REPROT_TIME_SEC      (3600)
+// deep sleep second
 #define WAKE_UP_TIME_SEC                (30)
 
 
 #define HUMIDITY_REPORT                 (1 << 0)
 #define TEMPERATURE_REPORT              (1 << 1)
+#define BATTERY_REPORT                  (1 << 2)
 
 // Should using zigbee to push data
 #define SHALL_ENABLE_REPORT             (1 << 0)

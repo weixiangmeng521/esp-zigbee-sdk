@@ -64,16 +64,14 @@ static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 
 
 // value for the ESP_ZB_ZCL_ATTR_IDENTIFY_IDENTIFY_TIME_ID attribute
-uint16_t identify_time = 0;
-uint8_t battery_alarm_mask = 0x03;
-uint8_t battery_voltage_rated = 74;
-uint8_t battery_quantity = 2;
-
-uint8_t battery_voltage = 0;
-uint8_t battery_percentage = 0;
-uint32_t battery_alarm_state = 0;
-uint8_t battery_voltage_min = 70;
-uint8_t battery_voltage_th1 = 72;
+static uint8_t battery_alarm_mask = 0x03;
+static uint8_t battery_voltage_rated = 74;
+static uint8_t battery_quantity = 2;
+static uint8_t battery_voltage = 0;
+static uint8_t battery_percentage = 0;
+static uint32_t battery_alarm_state = 0;
+static uint8_t battery_voltage_min = 70;
+static uint8_t battery_voltage_th1 = 72;
 
 
 // define function
@@ -116,12 +114,10 @@ static void zb_deep_sleep_start(float before_deep_sleep_time_sec)
 // upload temperature data.
 static bool updata_attribute_for_temperature(uint16_t temperature){
     float temp_f = temperature / 10.0f;
-
-    // if(fabs(temp_f - last_temperature) <= TEMP_DELTA) {
-    //     ESP_LOGI(TAG, "It doesnt need to update temperature.");
-    //     return false;
-    // }
-
+    if(fabs(temp_f - last_temperature) <= 0.1f) {
+        ESP_LOGI(TAG, "It doesnt need to update temperature.");
+        return false;
+    }
     // upload to zigbee
     uint16_t temp_s16 = temperature * 10;
     esp_zb_zcl_status_t state_tmp = esp_zb_zcl_set_attribute_val(
@@ -140,6 +136,43 @@ static bool updata_attribute_for_temperature(uint16_t temperature){
     // update last memeory
 	last_temperature = temp_f;
     ESP_LOGI(TAG, "Temperature has updated done.");
+    return true;
+}
+
+
+/**
+ * @brief update battery attribute
+ * 
+ * @param bat_v 
+ * @param battery_percentage
+ * @param bat_alarm_state 
+ * @return true 
+ * @return false 
+ */
+static bool update_attribute_for_battery_voltage(uint8_t bat_v, uint8_t bat_percentage, uint32_t bat_alarm_state){
+    ESP_LOGI(TAG, "Current value of battery voltage: %d, percentage: %d", bat_v, bat_percentage);
+
+    esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID, &bat_percentage, false);
+    if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGE(TAG, "Updating value of battery percentage: %d", status);
+    }    
+
+    status = esp_zb_zcl_set_attribute_val(HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID, &bat_v, false);
+    if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGE(TAG, "Updating value of battery voltage: %d", status);
+        return false;
+    }
+    status = esp_zb_zcl_set_attribute_val(HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_ALARM_STATE_ID, &bat_alarm_state, false);
+    if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGE(TAG, "Updating value of battery alarm state: %d", status);
+        return false;        
+    }
     return true;
 }
 
@@ -169,6 +202,16 @@ void zb_radio_send_values(uint8_t mapBits){
         ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
         ESP_LOGI(TAG, "Humidity reported");
     }
+    // report battery
+    if((mapBits & BATTERY_REPORT) != 0){
+        report_attr_cmd.attributeID = ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID;
+        report_attr_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG;
+        ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+        ESP_LOGI(TAG, "BatteryPercentageRemaining reported");
+        report_attr_cmd.attributeID = ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_ALARM_STATE_ID;
+        ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+        ESP_LOGI(TAG, "BatteryAlarmState reported");
+    }    
 }
 
 
@@ -181,11 +224,11 @@ void zb_radio_send_values(uint8_t mapBits){
 static bool updata_attribute_for_humidity(uint16_t humidity){
     float hum_f = humidity / 10.0f;
 
-    // // 判断是否需要更新
-    // if (fabs(hum_f - last_humidity) <= HUM_DELTA) {
-    //     ESP_LOGI(TAG, "It doesnt need to update humidity.");
-    //     return false;
-    // }    
+    // 判断是否需要更新
+    if (fabs(hum_f - last_humidity) == 0.1f) {
+        ESP_LOGI(TAG, "It doesnt need to update humidity.");
+        return false;
+    }
 
     uint16_t hum_s16 = humidity * 10;
     esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
@@ -247,17 +290,26 @@ void report_data_task(void *arg){
         ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", (tmp_temperature / 10.0f), (tmp_humidity / 10.0f));
         /* Update temperature sensor measured value */
         esp_zb_lock_acquire(portMAX_DELAY);
-        bool res1 = updata_attribute_for_temperature(tmp_temperature);
-        if(res1) map_bits |= HUMIDITY_REPORT;
-        bool res2 = updata_attribute_for_humidity(tmp_humidity);
-        if(res2) map_bits |= TEMPERATURE_REPORT;
+        bool res = updata_attribute_for_temperature(tmp_temperature);
+        if(res) map_bits |= HUMIDITY_REPORT;
+        res = updata_attribute_for_humidity(tmp_humidity);
+        if(res) map_bits |= TEMPERATURE_REPORT;
+        
+        // TODO: mockup data
+        int voltage = rand() % (84 - 70 + 1) + 70; // 70 ~ 84
+        float bat_voltage = 0.036207f * voltage; 
+        battery_voltage = (uint8_t)(bat_voltage + 0.5f);
+        battery_percentage = (uint8_t)((voltage - 70) * 100 / 14);
+        res = update_attribute_for_battery_voltage(battery_voltage, battery_percentage, battery_alarm_state);
+        if(res) map_bits |= BATTERY_REPORT;
+
         // send values
         zb_radio_send_values(map_bits);
         esp_zb_lock_release();
         // going to sleep
         if(is_just_reboot) {
             ESP_LOGI(TAG, "Device restart just now.");
-            zb_deep_sleep_start(13.0f);
+            zb_deep_sleep_start(30.0f);
         }
         if(!is_just_reboot) {
             zb_deep_sleep_start((float)BEFORE_DEEP_SLEEP_TIME_SEC);
@@ -340,7 +392,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         break;  
     case ESP_ZB_ZDO_SIGNAL_PRODUCTION_CONFIG_READY:
         esp_zb_set_node_descriptor_manufacturer_code(ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC);
-        break;                   
+        break;                       
     default:
         ESP_LOGI(TAG, "ZDO signal: %s (0x%x), status: %s", esp_zb_zdo_signal_to_string(sig_type), sig_type,
                  esp_err_to_name(err_status));
@@ -537,11 +589,11 @@ esp_err_t zb_read_attr_resp_handler(const esp_zb_zcl_cmd_read_attr_resp_message_
                         message->info.status);
 
     ESP_LOGI(TAG, "Read attribute response: from address(0x%x) src endpoint(%d) to dst endpoint(%d) cluster(0x%x) transaction(0x%x)",
-             message->info.src_address.u.short_addr, 
-             message->info.src_endpoint,
-             message->info.dst_endpoint, 
-             message->info.cluster,
-             message->info.header.tsn
+            message->info.src_address.u.short_addr, 
+            message->info.src_endpoint,
+            message->info.dst_endpoint, 
+            message->info.cluster,
+            message->info.header.tsn
     );
 
     esp_zb_zcl_read_attr_resp_variable_t *variable = message->variables;
@@ -738,7 +790,6 @@ static void zigbee_main_task(void *pvParameters){
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC
     };
     ESP_ERROR_CHECK(esp_zb_zcl_start_attr_reporting(battery_alarm_state_location_info));
-
 
 
     // ---------------- Register Device ----------------

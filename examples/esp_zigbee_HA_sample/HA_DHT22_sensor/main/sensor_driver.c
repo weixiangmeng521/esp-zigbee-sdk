@@ -72,8 +72,8 @@ static void temp_sensor_driver_value_update(void *arg)
         ESP_LOGI(TAG, "DHT Sensor Reading..." );
         temperature = getTemperature();
         humidity    = getHumidity();
-        
-        // if read success and callback function is set, 
+
+        // if read success and callback function is set
         // call it
         if (res == 1 && func_ptr && temperature != 0 && humidity != 0) {
             gpio_set_level(POWER_GPIO, P_LOW);
@@ -96,7 +96,6 @@ static void temp_sensor_driver_value_update(void *arg)
             }
         }
 
-        // deply .3s
         vTaskDelay(pdMS_TO_TICKS(retry_times_list[retry_index]));
         retry_index++;
     }

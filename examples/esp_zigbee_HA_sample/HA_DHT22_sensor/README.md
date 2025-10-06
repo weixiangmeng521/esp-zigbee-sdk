@@ -37,7 +37,7 @@ idf.py -p /dev/tty.usbmodem144201 monitor -b 115200
 
 
 ### 抹除数据
-idf.py -p  /dev/tty.usbmodem144401  erase-flash
+idf.py -p  /dev/tty.usbmodem144201  erase-flash
 
 
 ### 通过PMOS管供电，GPIO10控制
