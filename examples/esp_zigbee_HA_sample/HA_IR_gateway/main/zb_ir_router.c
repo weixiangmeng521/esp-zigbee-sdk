@@ -38,38 +38,44 @@ typedef struct zbstring_s {
 zbstring_t;
 
 /********************* Define functions **************************/
-static float zb_s16_to_lux(int16_t value)
-{
-    return 1.0 * value / 100;
-}
+// static float zb_s16_to_lux(int16_t value)
+// {
+//     return 1.0 * value / 100;
+// }
 
 
 /**
  * @brief 
  */
 static void update_lux_sensor_data(float lux){
-    // Zigbee ZCL 属性更新
-    uint16_t illuminance = (uint16_t)round(lux); // 可根据需要做转换
+    // update
+    esp_zb_lock_acquire(portMAX_DELAY);
+    uint16_t lux4ha =  (uint16_t)(log10(lux) * 10000 + 1);
     esp_zb_zcl_status_t state = esp_zb_zcl_set_attribute_val(
-        HA_ESP_LUX_SENSOR_ENDPOINT,
+        HA_ESP_LIGHT_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT, 
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MEASURED_VALUE_ID, 
-        &illuminance,
+        &lux4ha,
         false
     );
+    esp_zb_lock_release();
+
     /* Check for error */
     if(state != ESP_ZB_ZCL_STATUS_SUCCESS){
-        ESP_LOGE(TAG, "Failed to set illuminance: 0x%x", state);       
+        ESP_LOGE(TAG, "Failed to set illuminance: 0x%x", state);
         return;
     }
 
+    // report
+    esp_zb_lock_acquire(portMAX_DELAY);
     esp_zb_zcl_report_attr_cmd_t report_attr_cmd = {0};
     report_attr_cmd.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
     report_attr_cmd.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI;
     report_attr_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT;
-    report_attr_cmd.zcl_basic_cmd.src_endpoint = HA_ESP_LUX_SENSOR_ENDPOINT;
+    report_attr_cmd.zcl_basic_cmd.src_endpoint = HA_ESP_LIGHT_ENDPOINT;
     ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+    esp_zb_lock_release();
     ESP_LOGI(TAG, "Illuminance radio send reported");
 }
 
@@ -260,64 +266,6 @@ void zb_log_esp_zb_zcl_cmd_info_t(const char* prefix, const esp_zb_zcl_cmd_info_
 }
 
 
-// Handle attribute value indication
-static void esp_app_zb_attribute_handler(uint16_t cluster_id, const esp_zb_zcl_attribute_t* attribute)
-{
-    /* Basic cluster attributes */
-    if (cluster_id == ESP_ZB_ZCL_CLUSTER_ID_BASIC) {
-        if (attribute->id == ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_CHAR_STRING &&
-            attribute->data.value) {
-            zbstring_t *zbstr = (zbstring_t *)attribute->data.value;
-            char *string = (char*)malloc(zbstr->len + 1);
-            memcpy(string, zbstr->data, zbstr->len);
-            string[zbstr->len] = '\0';
-            ESP_LOGI(TAG, "Peer Manufacturer is \"%s\"", string);
-            free(string);
-        }
-        if (attribute->id == ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_CHAR_STRING &&
-            attribute->data.value) {
-            zbstring_t *zbstr = (zbstring_t *)attribute->data.value;
-            char *string = (char*)malloc(zbstr->len + 1);
-            memcpy(string, zbstr->data, zbstr->len);
-            string[zbstr->len] = '\0';
-            ESP_LOGI(TAG, "Peer Model is \"%s\"", string);
-            free(string);
-        }
-    }
-
-    /* Illuminance Measurement cluster attributes */
-    if (cluster_id == ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT) {
-        if (attribute->id == ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MEASURED_VALUE_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_S16) {
-            int16_t value = attribute->data.value ? *(int16_t *)attribute->data.value : 0;
-            ESP_LOGI(TAG, "Measured Value is %.2f lux", zb_s16_to_lux(value));
-        }
-        if (attribute->id == ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MIN_MEASURED_VALUE_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_S16) {
-            int16_t min_value = attribute->data.value ? *(int16_t *)attribute->data.value : 0;
-            ESP_LOGI(TAG, "Min Measured Value is %.2f lux", zb_s16_to_lux(min_value));
-        }
-        if (attribute->id == ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MAX_MEASURED_VALUE_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_S16) {
-            int16_t max_value = attribute->data.value ? *(int16_t *)attribute->data.value : 0;
-            ESP_LOGI(TAG, "Max Measured Value is %.2f lux", zb_s16_to_lux(max_value));
-        }
-        if (attribute->id == ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_TOLERANCE_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_U16) {
-            uint16_t tolerance = attribute->data.value ? *(uint16_t *)attribute->data.value : 0;
-            ESP_LOGI(TAG, "Tolerance is %.2f", 1.0 * tolerance / 100);
-        }
-        if (attribute->id == ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_LIGHT_SENSOR_TYPE_ID &&
-            attribute->data.type == ESP_ZB_ZCL_ATTR_TYPE_U8) {
-            uint8_t sensor_type = attribute->data.value ? *(uint8_t *)attribute->data.value : 0;
-            ESP_LOGI(TAG, "Device type is %u", sensor_type);
-        }        
-    }
-}
-
-
 // Handle attribute changes
 static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t *message)
 {
@@ -391,10 +339,7 @@ esp_err_t zb_read_attr_resp_handler(const esp_zb_zcl_cmd_read_attr_resp_message_
             variable->attribute.id, 
             variable->attribute.data.type,
             variable->attribute.data.value ? *(uint8_t *)variable->attribute.data.value : 0
-        );
-        if (variable->status == ESP_ZB_ZCL_STATUS_SUCCESS) {
-            esp_app_zb_attribute_handler(message->info.cluster, &variable->attribute);
-        }        
+        );    
         variable = variable->next;
     }
 
@@ -476,7 +421,6 @@ esp_err_t zb_attribute_reporting_handler(const esp_zb_zcl_report_attr_message_t 
         message->attribute.id,
         message->attribute.data.type
     );
-    esp_app_zb_attribute_handler(message->cluster, &message->attribute);
     return ESP_OK;
 }
 
@@ -522,32 +466,6 @@ static esp_zb_cluster_list_t *custom_light_device_clusters_create(esp_zb_on_off_
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_identify_cluster_create(&(light_cfg->identify_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_on_off_cluster(cluster_list, esp_zb_on_off_cluster_create(&(light_cfg->on_off_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-    // /* Add illuminance measurement cluster for attribute reporting */
-    // ESP_ERROR_CHECK(esp_zb_cluster_list_add_illuminance_meas_cluster(cluster_list, esp_zb_illuminance_meas_cluster_create(NULL), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-    return cluster_list;
-}
-
-static esp_zb_ep_list_t *custom_on_off_device_ep_create(uint8_t endpoint_id, esp_zb_on_off_light_cfg_t *on_off_cfg, esp_zb_ep_list_t *ep_list){
-    esp_zb_endpoint_config_t on_off_ep = {
-        .endpoint = endpoint_id,
-        .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .app_device_id = ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID,
-        .app_device_version = 0
-    };
-    esp_zb_ep_list_add_ep(ep_list, custom_light_device_clusters_create(on_off_cfg), on_off_ep);
-    return ep_list;
-}
-
-
-// light sensor device
-static esp_zb_cluster_list_t *custom_illuminance_sensor_clusters_create(esp_zb_light_sensor_cfg_t *light_cfg){
-    esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
-    esp_zb_attribute_list_t *basic_cluster = esp_zb_basic_cluster_create(&(light_cfg->basic_cfg));
-    ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, ESP_MANUFACTURER_NAME));
-    ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, ESP_MODEL_IDENTIFIER));
-    ESP_ERROR_CHECK(esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-    ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_identify_cluster_create(&(light_cfg->identify_cfg)), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
-    ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
     /* Add illuminance measurement cluster for attribute reporting */
     uint16_t min_lux = 0x0001;
     uint16_t max_lux = 0xFFFE;
@@ -562,14 +480,15 @@ static esp_zb_cluster_list_t *custom_illuminance_sensor_clusters_create(esp_zb_l
     return cluster_list;
 }
 
-static esp_zb_ep_list_t *custom_illuminance_sensor_ep_create(uint8_t endpoint_id, esp_zb_light_sensor_cfg_t *light_sensor_cfg, esp_zb_ep_list_t *ep_list){
-    esp_zb_endpoint_config_t lux_sensor_ep = {
+static esp_zb_ep_list_t *custom_on_off_device_ep_create(uint8_t endpoint_id, esp_zb_on_off_light_cfg_t *on_off_cfg){
+    esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
+    esp_zb_endpoint_config_t on_off_ep = {
         .endpoint = endpoint_id,
         .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .app_device_id = ESP_ZB_HA_LIGHT_SENSOR_DEVICE_ID,
+        .app_device_id = ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID,
         .app_device_version = 0
     };
-    esp_zb_ep_list_add_ep(ep_list, custom_illuminance_sensor_clusters_create(light_sensor_cfg), lux_sensor_ep);
+    esp_zb_ep_list_add_ep(ep_list, custom_light_device_clusters_create(on_off_cfg), on_off_ep);
     return ep_list;
 }
 
@@ -594,23 +513,19 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_init(&zb_nwk_cfg);
 
     /* Create on off endpoint */
-    esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
     esp_zb_on_off_light_cfg_t on_off_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
-    custom_on_off_device_ep_create(HA_ESP_LIGHT_ENDPOINT, &on_off_cfg, ep_list);
-    /* Create light sensor endpoint */
-    esp_zb_light_sensor_cfg_t lux_sensor_cfg = ESP_ZB_DEFAULT_LIGHT_SENSOR_CONFIG();
-    custom_illuminance_sensor_ep_create(HA_ESP_LUX_SENSOR_ENDPOINT, &lux_sensor_cfg, ep_list);
+    esp_zb_ep_list_t *ep_list = custom_on_off_device_ep_create(HA_ESP_LIGHT_ENDPOINT, &on_off_cfg);
     ESP_ERROR_CHECK(esp_zb_device_register(ep_list));
 
     /* Config the reporting info  */
     esp_zb_zcl_reporting_info_t reporting_lux_info = {
-        .direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI,
-        .ep = HA_ESP_LUX_SENSOR_ENDPOINT,
+        .direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep = HA_ESP_LIGHT_ENDPOINT,
         .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT,
         .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval = 1,
-        .u.send_info.max_interval = 10,
+        .u.send_info.min_interval = 2000,
+        .u.send_info.max_interval = 36000,
         .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MEASURED_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,

@@ -6,7 +6,6 @@
 
 #define INSTALLCODE_POLICY_ENABLE       false    /* enable the install code policy for security */
 #define HA_ESP_LIGHT_ENDPOINT           10       /* Endpoint for light device */
-#define HA_ESP_LUX_SENSOR_ENDPOINT      11       /* Endpoint for light sensor device */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK  /* Zigbee primary channel mask use in the example */
 #define MAX_CHILDREN                    10          /* the max amount of connected devices */
 

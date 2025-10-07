@@ -22,8 +22,8 @@ static void lux_sensor_driver_value_update(void *arg)
 {   
     float last_lux = -1.0f;
     while(1){
-        // read sensor value every 2 seconds
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        // read sensor value every 5 seconds
+        vTaskDelay(pdMS_TO_TICKS(5000));
 
         float lux;
         if (bh1750_read_lux(&lux) == ESP_OK) {

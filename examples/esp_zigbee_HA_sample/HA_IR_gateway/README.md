@@ -6,6 +6,9 @@ https://github.com/espressif/esp-idf/blob/v5.5/examples/zigbee/light_sample/HA_o
 
 https://github.com/UltronSysController/ULTRON_ZB_COLOR_TEMP_LIGHT/blob/a711dbc713ecdb51e636ebfbac517bab9417b223/main/esp_zb_light.c
 
+
+https://github.com/valivia/Finch-IOT/blob/65b5b0f175389f9a08fb12009489ed932f4de49b/main/clusters/light.c
+
 ### Go to folder
 cd ./examples/esp_zigbee_HA_sample/HA_IR_gateway
 
@@ -18,10 +21,10 @@ rm -rf build
 idf.py fullclean
 idf.py --preview set-target esp32h2
 idf.py build
-idf.py -p /dev/tty.usbmodem1442401 flash -b 115200
+idf.py -p /dev/tty.usbmodem142401 flash -b 115200
 
 ### 抹除数据
-idf.py -p /dev/tty.usbmodem1442401  erase-flash
+idf.py -p /dev/tty.usbmodem142401  erase-flash
 idf.py -p /dev/tty.usbmodem5A360298561  erase-flash
 
 idf.py menuconfig
@@ -33,4 +36,4 @@ idf.py build
 ls /dev/tty.*
 
 ### monitor
-idf.py -p /dev/tty.usbmodem1442401 monitor -b 115200
+idf.py -p /dev/tty.usbmodem142401 monitor -b 115200
