@@ -9,7 +9,7 @@
 - https://github.com/IgnacioHR/ZigbeeGasMeter/tree/eebfabbd62c466f94656868b1304fd7068300c53
 
 ### Go to folder
-cd ./examples/esp_zigbee_HA_sample/HA_DHT22_sensor
+cd ./examples/esp_zigbee_HA_sample/HA_AHT20_sensor
 
 
 ### call
@@ -21,6 +21,7 @@ rm -rf build
 idf.py fullclean
 idf.py build
 idf.py -p /dev/tty.usbmodem143401 flash -b 115200
+
 
 
 

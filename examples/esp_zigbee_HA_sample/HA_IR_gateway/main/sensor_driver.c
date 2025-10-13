@@ -12,6 +12,7 @@ static esp_lux_sensor_callback_t func_ptr;
 
 static const char *TAG = "ESP_BH1750_DRIVER";
 TaskHandle_t xHandle = NULL;
+float last_lux = -1.0f;
 
 /**
  * @brief Tasks for updating the sensor value
@@ -20,7 +21,6 @@ TaskHandle_t xHandle = NULL;
  */
 static void lux_sensor_driver_value_update(void *arg)
 {   
-    float last_lux = -1.0f;
     while(1){
         // read sensor value every 5 seconds
         vTaskDelay(pdMS_TO_TICKS(5000));

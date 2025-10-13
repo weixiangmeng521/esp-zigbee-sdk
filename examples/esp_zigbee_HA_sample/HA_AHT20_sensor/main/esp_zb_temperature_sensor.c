@@ -46,6 +46,8 @@ static RTC_DATA_ATTR struct timeval s_sleep_enter_time;
 static RTC_DATA_ATTR float last_temperature = 0;
 // last measured humidity
 static RTC_DATA_ATTR float last_humidity    = 0;
+// last measured air_pressure
+static RTC_DATA_ATTR float last_pressure    = 0;
 // last measured time
 static RTC_DATA_ATTR struct timeval s_last_reported_time;
 
@@ -56,10 +58,9 @@ uint8_t generic_device_type = 0xFF;
 // wait report data handle
 EventGroupHandle_t report_event_group_handle = NULL;
 
-// data from sensor
-static uint16_t tmp_temperature = 0;
-// data from sensor
-static uint16_t tmp_humidity    = 0;
+static float tmp_temperature = 0;
+static float tmp_humidity    = 0;
+static float tmp_pressure    = 0;
 static const char *TAG = "ESP_ZB_TEMP_SENSOR";
 
 
@@ -87,9 +88,8 @@ static void zigbee_main_task(void *pvParameters);
 
 
 
-static uint16_t zb_float_to_s16(float temp)
-{
-    return (uint16_t)roundf(temp * 100);
+static uint16_t zb_float_to_s16(float val){
+    return (uint16_t)roundf(val * 100);
 }
 
 
@@ -112,14 +112,13 @@ static void zb_deep_sleep_start(float before_deep_sleep_time_sec)
 }
 
 // upload temperature data.
-static bool updata_attribute_for_temperature(uint16_t temperature){
-    float temp_f = temperature / 10.0f;
-    if(fabs(temp_f - last_temperature) <= 0.1f) {
+static bool updata_attribute_for_temperature(float temperature){
+    if(fabs(temperature - last_temperature) <= 0.1f) {
         ESP_LOGI(TAG, "It doesnt need to update temperature.");
         return false;
     }
     // upload to zigbee
-    uint16_t temp_s16 = temperature * 10;
+    uint16_t temp_s16 = zb_float_to_s16(temperature);
     esp_zb_zcl_status_t state_tmp = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT, 
@@ -134,7 +133,7 @@ static bool updata_attribute_for_temperature(uint16_t temperature){
         return false;
     }
     // update last memeory
-	last_temperature = temp_f;
+	last_temperature = temperature;
     ESP_LOGI(TAG, "Temperature has updated done.");
     return true;
 }
@@ -202,6 +201,13 @@ void zb_radio_send_values(uint8_t mapBits){
         ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
         ESP_LOGI(TAG, "Humidity reported");
     }
+    // report air pressure
+    if((mapBits & AIR_PRESSURE_REPORT) != 0){
+        report_attr_cmd.attributeID = ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_VALUE_ID;
+        report_attr_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_PRESSURE_MEASUREMENT;
+        ESP_ERROR_CHECK(esp_zb_zcl_report_attr_cmd_req(&report_attr_cmd));
+        ESP_LOGI(TAG, "Air pressure reported");
+    }    
     // report battery
     if((mapBits & BATTERY_REPORT) != 0){
         report_attr_cmd.attributeID = ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID;
@@ -221,16 +227,14 @@ void zb_radio_send_values(uint8_t mapBits){
  * 
  * @param humidity 
  */
-static bool updata_attribute_for_humidity(uint16_t humidity){
-    float hum_f = humidity / 10.0f;
-
+static bool updata_attribute_for_humidity(float humidity){
     // 判断是否需要更新
-    if (fabs(hum_f - last_humidity) == 0.1f) {
+    if (fabs(humidity - last_humidity) == 0.1f) {
         ESP_LOGI(TAG, "It doesnt need to update humidity.");
         return false;
     }
 
-    uint16_t hum_s16 = humidity * 10;
+    uint16_t hum_s16 = zb_float_to_s16(humidity);
     esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
         HA_ESP_SENSOR_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
@@ -245,10 +249,46 @@ static bool updata_attribute_for_humidity(uint16_t humidity){
         return false;
     }
     // update last memeory
-    last_humidity = hum_f;
+    last_humidity = humidity;
     ESP_LOGI(TAG, "Humidity has updated done.");
     return true;
 }
+
+
+
+/**
+ * @brief upload pressure data.
+ * 
+ * @param pressure 
+ */
+static bool updata_attribute_for_air_pressure(float pressure){
+    // 判断是否需要更新
+    if (fabs(pressure - last_pressure) == 0.1f) {
+        ESP_LOGI(TAG, "It doesnt need to update air pressure.");
+        return false;
+    }
+
+    uint16_t pres_s16 = (uint16_t)pressure;
+    esp_zb_zcl_status_t state_hum = esp_zb_zcl_set_attribute_val(
+        HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_PRESSURE_MEASUREMENT,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_VALUE_ID,
+        &pres_s16,
+        false
+    );
+    /* Check for error */
+    if(state_hum != ESP_ZB_ZCL_STATUS_SUCCESS){
+        ESP_LOGE(TAG, "Failed to set air pressure: 0x%x", state_hum);
+        return false;
+    }
+    // update last memeory
+    last_pressure = pressure;
+    ESP_LOGI(TAG, "Air pressure has updated done.");
+    return true;
+}
+
+
 
 
 
@@ -287,14 +327,16 @@ void report_data_task(void *arg){
             pdMS_TO_TICKS(250));
 
         int8_t map_bits = 0;
-        ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%", (tmp_temperature / 10.0f), (tmp_humidity / 10.0f));
+        ESP_LOGI(TAG, "Temp: %.1f °C, Hum: %.f%%, Pressure: %.1f", tmp_temperature, tmp_humidity, tmp_pressure);
         /* Update temperature sensor measured value */
         esp_zb_lock_acquire(portMAX_DELAY);
         bool res = updata_attribute_for_temperature(tmp_temperature);
         if(res) map_bits |= HUMIDITY_REPORT;
         res = updata_attribute_for_humidity(tmp_humidity);
         if(res) map_bits |= TEMPERATURE_REPORT;
-        
+        res = updata_attribute_for_air_pressure(tmp_pressure);
+        if(res) map_bits |= AIR_PRESSURE_REPORT;        
+
         // TODO: mockup data
         int voltage = rand() % (84 - 70 + 1) + 70; // 70 ~ 84
         float bat_voltage = 0.036207f * voltage; 
@@ -484,7 +526,7 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
     //  Add humidity measurement cluster
     uint16_t min_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MIN_VALUE);
     uint16_t max_humidity = zb_float_to_s16(ESP_RELATIVE_HUMIDITY_SENSOR_MAX_VALUE);
-    uint16_t last_s16_hum = last_humidity == 0 ? ESP_ZB_ZCL_REL_HUMIDITY_MEASUREMENT_MEASURED_VALUE_DEFAULT : (uint16_t)(last_humidity * 100);
+    uint16_t last_s16_hum = last_humidity == 0 ? ESP_ZB_ZCL_REL_HUMIDITY_MEASUREMENT_MEASURED_VALUE_DEFAULT : zb_float_to_s16(last_humidity);
     esp_zb_attribute_list_t *esp_zb_humidity_meas_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT);
     esp_zb_attribute_list_t *esp_zb_power_cluster  = power_config_cluster_create_and_add_attrs();
     esp_zb_humidity_meas_cluster_add_attr(esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &last_s16_hum);
@@ -493,6 +535,15 @@ static esp_zb_cluster_list_t *custom_temperature_sensor_clusters_create(esp_zb_t
 
     // Add humidity measurement cluster
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_humidity_meas_cluster(cluster_list, esp_zb_humidity_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    // Add air pressure measurement cluster
+    int16_t pressure_max_value = ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_MAX_VALUE_DEFAULT_VALUE;
+    int16_t pressure_min_value = ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_MIN_VALUE_DEFAULT_VALUE;    
+    uint16_t last_s16_pres = (uint16_t)last_pressure;
+    esp_zb_attribute_list_t *esp_zb_pressure_meas_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_PRESSURE_MEASUREMENT);
+    esp_zb_pressure_meas_cluster_add_attr(esp_zb_pressure_meas_cluster, ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_VALUE_ID, &last_s16_pres);
+    esp_zb_pressure_meas_cluster_add_attr(esp_zb_pressure_meas_cluster, ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_MAX_VALUE_ID, &pressure_max_value);
+    esp_zb_pressure_meas_cluster_add_attr(esp_zb_pressure_meas_cluster, ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_MIN_VALUE_ID, &pressure_min_value);
+    ESP_ERROR_CHECK(esp_zb_cluster_list_add_pressure_meas_cluster(cluster_list, esp_zb_pressure_meas_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     // Add power measurement cluster
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_power_config_cluster(cluster_list, esp_zb_power_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     return cluster_list;
@@ -734,7 +785,7 @@ static void zigbee_main_task(void *pvParameters){
 
     /* Create customized temperature sensor endpoint */
     esp_zb_temperature_sensor_cfg_t sensor_cfg = ESP_ZB_DEFAULT_TEMPERATURE_SENSOR_CONFIG();
-    uint16_t last_s16_tmp = last_temperature == 0 ? ESP_ZB_ZCL_TEMP_MEASUREMENT_MEASURED_VALUE_DEFAULT : (uint16_t)(last_temperature * 100);
+    uint16_t last_s16_tmp = last_temperature == 0 ? ESP_ZB_ZCL_TEMP_MEASUREMENT_MEASURED_VALUE_DEFAULT : zb_float_to_s16(last_temperature);
 
     /* Set (Min|Max|Real)MeasuredValure */
     sensor_cfg.temp_meas_cfg.measured_value = last_s16_tmp;
@@ -775,13 +826,26 @@ static void zigbee_main_task(void *pvParameters){
         .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,
         .u.send_info.min_interval = TIME_TO_SLEEP_ZIGBEE_ON / 2000,
         .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
-        // .u.send_info.def_min_interval = 0,
-        // .u.send_info.def_max_interval = 1,
         .u.send_info.delta.u16 = 0,
         .attr_id = ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
         .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
     ESP_ERROR_CHECK(esp_zb_zcl_update_reporting_info(&reporting_hum_info));
+
+    /* Config the reporting info  */
+    esp_zb_zcl_reporting_info_t reporting_pressure_info = {
+        .direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep = HA_ESP_SENSOR_ENDPOINT,
+        .cluster_id = ESP_ZB_ZCL_CLUSTER_ID_PRESSURE_MEASUREMENT,
+        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .attr_id = ESP_ZB_ZCL_ATTR_PRESSURE_MEASUREMENT_VALUE_ID,
+        .dst.profile_id = ESP_ZB_AF_HA_PROFILE_ID,        
+        .u.send_info.min_interval = TIME_TO_SLEEP_ZIGBEE_ON / 2000,
+        .u.send_info.max_interval = (uint16_t)MUST_SYNC_MINIMUM_TIME,
+        .u.send_info.delta.u16 = 0,
+        .manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+    };
+    ESP_ERROR_CHECK(esp_zb_zcl_update_reporting_info(&reporting_pressure_info));
 
     // battery voltage
     esp_zb_zcl_attr_location_info_t  percentage_location_info = {
@@ -816,12 +880,13 @@ static void zigbee_main_task(void *pvParameters){
 
 
 // 获取sensor的数据
-static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
+static void esp_app_temp_sensor_handler(float temperature, float humidity, float pressure)
 {
     // ESP_LOGI(TAG, "RAW Temp: %.1f °C, Hum: %.f%%", (temperature / 10.0f), (humidity / 10.0f));
     // current temperature and humidit
     tmp_temperature = temperature;
     tmp_humidity = humidity;
+    tmp_pressure = pressure;
 
     // get current time
     struct timeval now;
@@ -857,18 +922,15 @@ static void esp_app_temp_sensor_handler(uint16_t temperature, uint16_t humidity)
 
 
 /**
- * @brief init dht22 sensor
+ * @brief init ahtxx_bmp280 sensor
  * 
  */
-static void init_dht22_sensor(void)
+static void init_ahtxx_bmp280_sensor(void)
 {   
-    temperature_sensor_config_t temp_sensor_config =
-        TEMPERATURE_SENSOR_CONFIG_DEFAULT(ESP_TEMP_SENSOR_MIN_VALUE, ESP_TEMP_SENSOR_MAX_VALUE);
-
     esp_err_t ret = temp_sensor_driver_init(
-        &temp_sensor_config,
-        DHT22_GPIO,
-        DHT22_POWER_GPIO,
+        I2C_MASTER_SCL_IO,
+        I2C_MASTER_SDA_IO,
+        I2C_MASTER_POWER_IO,        
         esp_app_temp_sensor_handler,
         esp_app_temp_sensor_fallback_handler
     );
@@ -878,8 +940,6 @@ static void init_dht22_sensor(void)
         return;
     }
 }
-
-
 
 
 /**
@@ -985,5 +1045,5 @@ void app_main(void)
     zb_deep_sleep_init();
 
     /* Start Zigbee stack task */
-    init_dht22_sensor();
+    init_ahtxx_bmp280_sensor();
 }
