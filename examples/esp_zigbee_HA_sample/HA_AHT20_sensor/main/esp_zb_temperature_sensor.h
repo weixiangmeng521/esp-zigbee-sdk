@@ -60,9 +60,10 @@
 // i2c config
 #define I2C_MASTER_POWER_IO     10   /*!< GPIO number for I2C master power */
 #define I2C_MASTER_SCL_IO       14   /*!< GPIO number for I2C master clock */
-#define I2C_MASTER_SDA_IO       13   /*!< GPIO number for I2C master data  */
+#define I2C_MASTER_SDA_IO       12   /*!< GPIO number for I2C master data  */
 
-
+// GPIO8 => FastLED, NeoPixel, etc
+// GPIO13 => Blue LED – User Controllable
 
 /* Attribute values in ZCL string format
  * The string should be started with the length of its own.
