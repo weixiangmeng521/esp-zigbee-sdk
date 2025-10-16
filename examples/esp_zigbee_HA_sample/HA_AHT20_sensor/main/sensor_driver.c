@@ -58,15 +58,18 @@ static int i2c_master_scl_io                 = 4;
 static int i2c_master_sad_io                 = 5;
 
 
+// close
+void remove_i2c(){
+    if(bmp280_dev_hdl) ESP_ERROR_CHECK(bmp280_delete(bmp280_dev_hdl));
+    if(ahtxx_dev_hdl) ESP_ERROR_CHECK(ahtxx_delete(ahtxx_dev_hdl));
+    if(i2c0_bus_hdl) ESP_ERROR_CHECK(i2c_del_master_bus(i2c0_bus_hdl));
+    return;
+}
+
 /**
  * @brief oneshot for measure
  */
 int oneshot(){
-    // set default GPIO
-    gpio_reset_pin(i2c_master_power_gpio);
-    gpio_set_direction(i2c_master_power_gpio, GPIO_MODE_OUTPUT);
-    gpio_set_level(i2c_master_power_gpio, P_HIGHT);
-
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c0_bus_cfg, &i2c0_bus_hdl));
 
     // init device
@@ -74,10 +77,7 @@ int oneshot(){
     if (bmp280_dev_hdl == NULL) {
         ESP_LOGE(TAG, "bmp280 handle init failed");
         // close connection
-        if(bmp280_dev_hdl) ESP_ERROR_CHECK(bmp280_delete(bmp280_dev_hdl));
-        if(ahtxx_dev_hdl) ESP_ERROR_CHECK(ahtxx_delete(ahtxx_dev_hdl));
-        ESP_ERROR_CHECK(i2c_del_master_bus(i2c0_bus_hdl));
-        gpio_set_level(i2c_master_power_gpio, P_LOW);        
+        remove_i2c();
         return -1;
     }
 
@@ -86,10 +86,7 @@ int oneshot(){
     if (ahtxx_dev_hdl == NULL) {
         ESP_LOGE(TAG, "ahtxx handle init failed");
         // close connection
-        if(bmp280_dev_hdl) ESP_ERROR_CHECK(bmp280_delete(bmp280_dev_hdl));
-        if(ahtxx_dev_hdl) ESP_ERROR_CHECK(ahtxx_delete(ahtxx_dev_hdl));
-        ESP_ERROR_CHECK(i2c_del_master_bus(i2c0_bus_hdl));
-        gpio_set_level(i2c_master_power_gpio, P_LOW);
+        remove_i2c();
         return -1;        
     }
 
@@ -117,10 +114,7 @@ int oneshot(){
     ESP_LOGI(TAG, "######################## BMP280 & AHTXX - END ###########################");
 
     // free resources
-    ESP_ERROR_CHECK(bmp280_delete(bmp280_dev_hdl));
-    ESP_ERROR_CHECK(ahtxx_delete(ahtxx_dev_hdl));
-    ESP_ERROR_CHECK(i2c_del_master_bus(i2c0_bus_hdl));
-    gpio_set_level(i2c_master_power_gpio, P_LOW);
+    remove_i2c();
     return 1;
 }
 
@@ -131,10 +125,15 @@ int oneshot(){
  * @param arg      Unused value.
  */
 static void temp_sensor_driver_value_update(void *arg)
-{   
+{       
     int retry_index           = 0;
     int retry_times_list[]    = {160, 240, 320, 400, 480, 560};
     int retry_count           = sizeof(retry_times_list) / sizeof(retry_times_list[0]);
+
+    // set default GPIO
+    gpio_reset_pin(i2c_master_power_gpio);
+    gpio_set_direction(i2c_master_power_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_level(i2c_master_power_gpio, P_HIGHT);
 
     while(1){
         // measure
@@ -142,10 +141,11 @@ static void temp_sensor_driver_value_update(void *arg)
 
         // if read success and callback function is set
         // call it
-        if (res == 1 && func_ptr && temperature != 0 && humidity != 0 && pressure != 0) {
+        if (res == 1 && func_ptr) {
             func_ptr(temperature, humidity, pressure);
             if(xHandle != NULL){
                 vTaskDelete(xHandle);
+                gpio_set_level(i2c_master_power_gpio, P_LOW);
                 return;
             }
         }
@@ -157,6 +157,7 @@ static void temp_sensor_driver_value_update(void *arg)
             vTaskDelete(xHandle);
             if(xHandle != NULL){
                 vTaskDelete(xHandle);
+                gpio_set_level(i2c_master_power_gpio, P_LOW);
                 return;
             }
         }
